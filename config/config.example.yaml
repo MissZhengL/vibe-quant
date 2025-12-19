@@ -1,0 +1,97 @@
+# vibe-quant 配置文件示例
+# 复制此文件为 config.yaml 并根据需要修改
+
+global:
+  testnet: false
+  proxy: null   # 代理设置，如 "http://127.0.0.1:7890"，不使用则设为 null
+  ws:
+    stale_data_ms: 1500
+    reconnect:
+      initial_delay_ms: 1000
+      max_delay_ms: 30000
+      multiplier: 2
+  # 限速
+  rate_limit:
+    max_orders_per_sec: 5
+    max_cancels_per_sec: 8
+  # Telegram
+  # 凭证需配置到.env中：TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID
+  telegram:
+    enabled: false
+    events:
+      on_fill: true
+      on_reconnect: true
+      on_risk_trigger: true
+      on_open_alert: true
+
+  execution:
+    order_ttl_ms: 4000
+    repost_cooldown_ms: 100
+    min_signal_interval_ms: 200
+    base_lot_mult: 1
+
+    # maker 定价策略
+    # at_touch: 挂在对手价
+    # inside_spread_1tick: 挂在对手价内缩 1 tick
+    # custom_ticks: 挂在对手价内缩 n tick
+    maker_price_mode: "inside_spread_1tick"
+    maker_n_ticks: 1
+    # post-only maker 安全距离（ticks），越大越不容易 -5022，但更难成交
+    maker_safety_ticks: 1
+
+    # 双保险
+    max_mult: 100               # 最大加速倍数  final_mult = base_mult * roi_mult * accel_mult，不超过此值
+    max_order_notional: 500     # 最大单笔订单名义价值（USDT）
+
+    # 模式轮转（MAKER_ONLY ↔ AGGRESSIVE_LIMIT）
+    maker_timeouts_to_escalate: 2
+    aggr_fills_to_deescalate: 1
+    aggr_timeouts_to_deescalate: 2
+
+  # 加速倍数
+  accel:
+    window_ms: 2000       # 2秒窗口
+    tiers:                # LONG/SHORT 共用，方向自动处理
+      - { ret: 0.001, mult: 2 }    # 窗口涨/跌幅 >= 0.1% 时，mult=2
+      - { ret: 0.002, mult: 3 }    # 窗口涨/跌幅 >= 0.2% 时，mult=3
+      - { ret: 0.005, mult: 5 }    # 窗口涨/跌幅 >= 0.5% 时，mult=5
+      - { ret: 0.01, mult: 10 }    # 窗口涨/跌幅 >= 1.0% 时，mult=10
+
+  # ROI 倍数
+  roi:
+    tiers:
+      - { roi: 0.1, mult: 2 }     # ROI >= 10% 时，mult=2
+      - { roi: 0.2, mult: 3 }     # ROI >= 20% 时，mult=3
+      - { roi: 0.5, mult: 5 }     # ROI >= 50% 时，mult=5
+
+  # 风控
+  risk:
+    # 第一等级：距离强平价多少比例时切换到 AGGRESSIVE_LIMIT 模式
+    liq_distance_threshold: 0.05
+
+    # 第二等级：距离强平价多少比例时按梯度强制平仓
+    panic_close:
+      enabled: true
+      ttl_percent: 0.5
+      tiers:
+        - { dist_to_liq: 0.04, slice_ratio: 0.02, maker_timeouts_to_escalate: 2 }
+        - { dist_to_liq: 0.03, slice_ratio: 0.05, maker_timeouts_to_escalate: 2 }
+        - { dist_to_liq: 0.02, slice_ratio: 0.10, maker_timeouts_to_escalate: 2 }
+
+    # 第三等级：仓位保护性止损（交易所端条件单）
+    protective_stop:
+      enabled: true
+      dist_to_liq: 0.01
+
+# Symbol 配置（可覆盖 global 中的 execution/accel/roi/risk）
+symbols:
+  # 示例：BTC 永续
+  # BTC/USDT:USDT:
+  #   execution:
+  #     order_ttl_ms: 3000
+  #     max_order_notional: 1000
+
+  # 示例：ETH 永续
+  # ETH/USDT:USDT:
+  #   execution:
+  #     max_order_notional: 500
