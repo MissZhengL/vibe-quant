@@ -32,7 +32,8 @@
 **补充改进（同批交付）**：<br>
 - 保护性止损只允许“收紧”（LONG stopPrice 只上调；SHORT stopPrice 只下调），避免仓位变安全时把止损越推越远，并减少频繁撤旧建新带来的空窗风险<br>
 - 保护性止损同步采用分级 debounce：`position_update` 1s；`startup/calibration` 0s；其余 0.2s（兼顾 REST 压力与关键场景恢复速度）<br>
-- 启动同步时打印已存在的外部 `closePosition` 条件单（含 order_id/client_id），并在 `skip_external_stop` 时附带外部单关键字段便于排查<br>
+- 启动同步时打印已存在的外部 `closePosition` 条件单（含 order_id/client_id），并在 `skip_external_stop` 时附带外部单关键字段便于排查；新增“外部多单”告警（同侧出现多张外部 stop/tp 时打印摘要）<br>
+- 外部接管从 TTL 提示升级为“锁存 + 保险丝”：外部 stop/tp（`cp=True` 或 `reduceOnly=True`）一旦出现即锁存接管；锁存期间按 `external_takeover.rest_verify_interval_s` 周期触发 REST 校验，若长期无外部单则释放锁存并恢复自维护（配置：`global.risk.protective_stop.external_takeover.*`）<br>
 - 测试：补充 `tests/test_protective_stop.py`（只收紧语义/启动外部单日志等）与 `tests/test_main_shutdown.py`（debounce 分级逻辑）
 
 ### 可选后续工作

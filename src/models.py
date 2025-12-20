@@ -243,6 +243,7 @@ class OrderUpdate:
     timestamp_ms: int
     order_type: Optional[str] = None  # WS 字段 o.o，例如 LIMIT / STOP_MARKET / TAKE_PROFIT_MARKET
     close_position: Optional[bool] = None  # WS 字段 o.cp，closePosition/Close-All
+    reduce_only: Optional[bool] = None  # WS 字段 o.R
 
 
 # ============================================================

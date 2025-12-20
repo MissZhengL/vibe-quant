@@ -187,6 +187,13 @@ class ConfigLoader:
         s_pstop = s_risk.protective_stop if s_risk and s_risk.protective_stop else None
         protective_stop_enabled = _get_override(s_pstop, "enabled", g_risk.protective_stop.enabled)
         protective_stop_dist_to_liq = _get_override(s_pstop, "dist_to_liq", g_risk.protective_stop.dist_to_liq)
+        s_et = s_pstop.external_takeover if s_pstop and getattr(s_pstop, "external_takeover", None) else None
+        g_et = g_risk.protective_stop.external_takeover
+        protective_stop_external_takeover_enabled = _get_override(s_et, "enabled", g_et.enabled)
+        protective_stop_external_takeover_rest_verify_interval_s = _get_override(
+            s_et, "rest_verify_interval_s", g_et.rest_verify_interval_s
+        )
+        protective_stop_external_takeover_max_hold_s = _get_override(s_et, "max_hold_s", g_et.max_hold_s)
 
         return MergedSymbolConfig(
             symbol=symbol,
@@ -220,6 +227,9 @@ class ConfigLoader:
             panic_close_tiers=panic_close_tiers,
             protective_stop_enabled=protective_stop_enabled,
             protective_stop_dist_to_liq=protective_stop_dist_to_liq,
+            protective_stop_external_takeover_enabled=protective_stop_external_takeover_enabled,
+            protective_stop_external_takeover_rest_verify_interval_s=protective_stop_external_takeover_rest_verify_interval_s,
+            protective_stop_external_takeover_max_hold_s=protective_stop_external_takeover_max_hold_s,
             # 限速
             max_orders_per_sec=g_rate.max_orders_per_sec,
             max_cancels_per_sec=g_rate.max_cancels_per_sec,

@@ -454,16 +454,18 @@ class UserDataWSClient:
 
             order_type = order_data.get("o")
             close_position = order_data.get("cp")
+            reduce_only = order_data.get("R")
 
             # 时间戳
             timestamp_ms = int(data.get("T", 0)) or int(data.get("E", 0)) or current_time_ms()
 
-            if close_position is True or (
+            if close_position is True or reduce_only is True or (
                 isinstance(order_type, str) and order_type in ("STOP_MARKET", "TAKE_PROFIT_MARKET", "STOP", "TAKE_PROFIT")
             ):
                 get_logger().info(
                     f"[WS_RAW] ORDER_TRADE_UPDATE symbol={symbol} oid={order_data.get('i')} cid={order_data.get('c')} "
-                    f"type={order_type} ps={order_data.get('ps')} cp={close_position} X={order_data.get('X')} x={order_data.get('x')}"
+                    f"type={order_type} ps={order_data.get('ps')} cp={close_position} R={reduce_only} "
+                    f"X={order_data.get('X')} x={order_data.get('x')}"
                 )
 
             return OrderUpdate(
@@ -478,6 +480,7 @@ class UserDataWSClient:
                 timestamp_ms=timestamp_ms,
                 order_type=str(order_type) if order_type is not None else None,
                 close_position=bool(close_position) if isinstance(close_position, bool) else None,
+                reduce_only=bool(reduce_only) if isinstance(reduce_only, bool) else None,
             )
 
         except Exception as e:

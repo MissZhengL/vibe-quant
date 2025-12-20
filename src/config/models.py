@@ -78,6 +78,13 @@ class ProtectiveStopConfig(BaseModel):
         le=Decimal("1"),
         description="止损触发距离：使触发时 dist_to_liq≈dist_to_liq（按 liquidation_price 反推 stopPrice）",
     )
+    class ExternalTakeoverConfig(BaseModel):
+        """外部止损接管（手动/其他端）"""
+        enabled: bool = Field(default=True, description="是否启用外部止损接管锁存")
+        rest_verify_interval_s: int = Field(default=30, ge=1, description="锁存期间的 REST 校验间隔(s)")
+        max_hold_s: int = Field(default=300, ge=1, description="锁存最长持续时间(s)，超时后触发 REST 校验兜底")
+
+    external_takeover: ExternalTakeoverConfig = Field(default_factory=ExternalTakeoverConfig)
 
 class RiskConfig(BaseModel):
     """风控配置"""
@@ -185,6 +192,12 @@ class SymbolProtectiveStopConfig(BaseModel):
     """Symbol 级别保护性止损覆盖（所有字段可选）"""
     enabled: Optional[bool] = None
     dist_to_liq: Optional[Decimal] = Field(default=None, gt=Decimal("0"), le=Decimal("1"))
+    class SymbolExternalTakeoverConfig(BaseModel):
+        enabled: Optional[bool] = None
+        rest_verify_interval_s: Optional[int] = Field(default=None, ge=1)
+        max_hold_s: Optional[int] = Field(default=None, ge=1)
+
+    external_takeover: Optional[SymbolExternalTakeoverConfig] = None
 
 
 class SymbolRiskConfig(BaseModel):
@@ -273,6 +286,9 @@ class MergedSymbolConfig(BaseModel):
     panic_close_tiers: List[PanicCloseTier]
     protective_stop_enabled: bool
     protective_stop_dist_to_liq: Decimal
+    protective_stop_external_takeover_enabled: bool
+    protective_stop_external_takeover_rest_verify_interval_s: int
+    protective_stop_external_takeover_max_hold_s: int
 
     # 限速
     max_orders_per_sec: int

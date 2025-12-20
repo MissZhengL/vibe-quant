@@ -302,7 +302,7 @@ vibe-quant/
 | 2025-12-19 | 完善 Symbol 配置覆盖：symbols 可覆盖 execution/accel/roi/risk 全部字段（含 panic_close） |
 | 2025-12-19 | 修复保护止损 Binance Algo API 适配：clientOrderId 唯一化（7天内唯一）、修复 openAlgoOrders 响应格式解析、外部止损单检测（避免 -4130）、日志 Decimal 自动格式化 |
 | 2025-12-20 | 增强用户数据 WS：解析 ALGO_UPDATE 与 ORDER_TRADE_UPDATE 的 closePosition(cp) 字段，并在外部条件单状态变化时触发保护止损同步（外部接管/自动恢复） |
-| 2025-12-20 | 保护性止损策略增强：只允许“收紧”止损（不放松），同步调度采用分级 debounce（position_update 1s，startup/calibration 0s，其余 0.2s），并在启动时打印已存在的外部 closePosition 条件单便于排查 |
+| 2025-12-20 | 保护性止损策略增强：只允许“收紧”止损（不放松），同步调度采用分级 debounce（position_update 1s，startup/calibration 0s，其余 0.2s）；外部接管采用锁存 + REST 保险丝（可配），并在启动/接管时打印外部单摘要与外部多单告警 |
 
 ---
 

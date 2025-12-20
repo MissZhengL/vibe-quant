@@ -16,6 +16,7 @@ import os
 import signal
 import sys
 import uuid
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Dict, Optional, List, Sequence, Awaitable, Any, Coroutine
@@ -62,9 +63,15 @@ from src.utils.helpers import current_time_ms, format_decimal
 
 CLIENT_ORDER_PREFIX = "vq"
 PROTECTIVE_STOP_PREFIX = f"{CLIENT_ORDER_PREFIX}-ps-"
-EXTERNAL_STOP_TTL_MS = 5000  # WS 已见外部 closePosition 条件单时的保护窗口（避免 REST 延迟导致误下单撞 -4130）
 
 _STOP_ORDER_TYPES = {"STOP_MARKET", "TAKE_PROFIT_MARKET", "STOP", "TAKE_PROFIT"}
+
+@dataclass
+class ExternalTakeoverState:
+    active: bool = False
+    first_seen_ms: int = 0
+    last_seen_ms: int = 0
+    last_verify_ms: int = 0
 
 
 class Application:
@@ -118,17 +125,72 @@ class Application:
         self._position_revision: dict[tuple[str, PositionSide], int] = {}
         self._position_last_change: dict[tuple[str, PositionSide], tuple[Decimal, Decimal]] = {}
         self._panic_last_tier: dict[tuple[str, PositionSide], Decimal] = {}
-        self._external_stop_until_ms: dict[tuple[str, PositionSide], int] = {}
+        self._external_takeover: dict[tuple[str, PositionSide], ExternalTakeoverState] = {}
 
-    def _set_external_stop_hint(self, symbol: str, position_side: PositionSide, *, now_ms: int) -> None:
-        self._external_stop_until_ms[(symbol, position_side)] = now_ms + EXTERNAL_STOP_TTL_MS
+    def _get_external_takeover_cfg_ms(self, symbol: str) -> tuple[bool, int, int]:
+        cfg = self._symbol_configs.get(symbol)
+        if not cfg:
+            return False, 0, 0
+        enabled = bool(cfg.protective_stop_external_takeover_enabled)
+        verify_ms = int(cfg.protective_stop_external_takeover_rest_verify_interval_s) * 1000
+        max_hold_ms = int(cfg.protective_stop_external_takeover_max_hold_s) * 1000
+        return enabled, verify_ms, max_hold_ms
 
-    def _clear_external_stop_hint(self, symbol: str, position_side: PositionSide) -> None:
-        self._external_stop_until_ms.pop((symbol, position_side), None)
+    def _external_takeover_mark_seen(self, symbol: str, position_side: PositionSide, *, now_ms: int) -> None:
+        enabled, _verify_ms, _max_hold_ms = self._get_external_takeover_cfg_ms(symbol)
+        if not enabled:
+            return
+        key = (symbol, position_side)
+        st = self._external_takeover.get(key)
+        if st is None:
+            st = ExternalTakeoverState()
+            self._external_takeover[key] = st
+        if not st.active:
+            st.active = True
+            st.first_seen_ms = now_ms
+        st.last_seen_ms = now_ms
 
-    def _has_external_stop_hint(self, symbol: str, position_side: PositionSide, *, now_ms: int) -> bool:
-        until = self._external_stop_until_ms.get((symbol, position_side))
-        return until is not None and until > now_ms
+    def _external_takeover_mark_terminal(self, symbol: str, position_side: PositionSide, *, now_ms: int) -> None:
+        enabled, _verify_ms, _max_hold_ms = self._get_external_takeover_cfg_ms(symbol)
+        if not enabled:
+            return
+        key = (symbol, position_side)
+        st = self._external_takeover.get(key)
+        if st is None:
+            st = ExternalTakeoverState()
+            self._external_takeover[key] = st
+        st.active = False
+        st.last_seen_ms = now_ms
+
+    def _external_takeover_is_active(self, symbol: str, position_side: PositionSide, *, now_ms: int) -> bool:
+        enabled, verify_ms, max_hold_ms = self._get_external_takeover_cfg_ms(symbol)
+        if not enabled:
+            return False
+        st = self._external_takeover.get((symbol, position_side))
+        if not st or not st.active:
+            return False
+        # 兜底：若锁存持续过久且很久没看到 WS 心跳，则依赖 REST 校验释放（由 _check_all_timeouts 触发 sync）
+        _ = verify_ms, max_hold_ms, now_ms
+        return True
+
+    def _external_takeover_should_verify(self, symbol: str, position_side: PositionSide, *, now_ms: int) -> bool:
+        enabled, verify_ms, max_hold_ms = self._get_external_takeover_cfg_ms(symbol)
+        if not enabled:
+            return False
+        st = self._external_takeover.get((symbol, position_side))
+        if not st or not st.active:
+            return False
+        if st.last_verify_ms == 0 or now_ms - st.last_verify_ms >= verify_ms:
+            return True
+        # 锁存过久：额外确保会触发校验
+        if st.first_seen_ms and now_ms - st.first_seen_ms >= max_hold_ms and now_ms - st.last_verify_ms >= min(verify_ms, 5000):
+            return True
+        return False
+
+    def _external_takeover_note_verified(self, symbol: str, position_side: PositionSide, *, now_ms: int) -> None:
+        st = self._external_takeover.get((symbol, position_side))
+        if st:
+            st.last_verify_ms = now_ms
 
     def _init_run_identity(self) -> None:
         """初始化本次运行的标识（用于 newClientOrderId 前缀）。"""
@@ -262,19 +324,36 @@ class Application:
 
         try:
             now_ms = current_time_ms()
-            external_hint = {
-                PositionSide.LONG: self._has_external_stop_hint(symbol, PositionSide.LONG, now_ms=now_ms),
-                PositionSide.SHORT: self._has_external_stop_hint(symbol, PositionSide.SHORT, now_ms=now_ms),
+            external_latch = {
+                PositionSide.LONG: self._external_takeover_is_active(symbol, PositionSide.LONG, now_ms=now_ms),
+                PositionSide.SHORT: self._external_takeover_is_active(symbol, PositionSide.SHORT, now_ms=now_ms),
             }
-            await self.protective_stop_manager.sync_symbol(
+            rest_external = await self.protective_stop_manager.sync_symbol(
                 symbol=symbol,
                 rules=rules,
                 positions=self._positions.get(symbol, {}),
                 enabled=cfg.protective_stop_enabled,
                 dist_to_liq=cfg.protective_stop_dist_to_liq,
-                external_stop_hint_by_side=external_hint,
+                external_stop_latch_by_side=external_latch,
                 sync_reason=reason,
             )
+            enabled, verify_ms, _max_hold_ms = self._get_external_takeover_cfg_ms(symbol)
+            if enabled:
+                for side in (PositionSide.LONG, PositionSide.SHORT):
+                    self._external_takeover_note_verified(symbol, side, now_ms=now_ms)
+                    if rest_external.get(side, False):
+                        self._external_takeover_mark_seen(symbol, side, now_ms=now_ms)
+                    else:
+                        st = self._external_takeover.get((symbol, side))
+                        if st and st.active and (now_ms - st.last_seen_ms) >= verify_ms:
+                            st.active = False
+                            log_event(
+                                "protective_stop",
+                                event_cn="保护止损",
+                                symbol=symbol,
+                                side=side.value,
+                                reason="external_takeover_release_by_rest",
+                            )
         except Exception as e:
             log_error(f"保护止损同步异常: {e}", symbol=symbol, reason=reason)
 
@@ -786,8 +865,10 @@ class Application:
             )
             return
 
-        # 2. 外部 closePosition 条件单：仍以 cp=True 为准（保守）
-        if update.close_position is True:
+        # 2. 外部 stop/tp 条件单：closePosition(cp)=True 或 reduceOnly(R)=True 均视为外部接管
+        if update.order_type and update.order_type.upper() in _STOP_ORDER_TYPES and (
+            update.close_position is True or update.reduce_only is True
+        ):
             now_ms = current_time_ms()
             if update.position_side == PositionSide.LONG:
                 sides = [PositionSide.LONG]
@@ -796,15 +877,15 @@ class Application:
             else:
                 # ps 不明确时（例如 BOTH），保守认为两边都可能被外部条件单占用
                 sides = [PositionSide.LONG, PositionSide.SHORT]
-            terminal = update.status.upper() in {"CANCELED", "EXPIRED", "FINISHED", "REJECTED"}
+            terminal = update.status.upper() in {"CANCELED", "EXPIRED", "FINISHED", "REJECTED", "FILLED", "TRIGGERED"}
             for side in sides:
                 if terminal:
-                    self._clear_external_stop_hint(update.symbol, side)
+                    self._external_takeover_mark_terminal(update.symbol, side, now_ms=now_ms)
                 else:
-                    self._set_external_stop_hint(update.symbol, side, now_ms=now_ms)
+                    self._external_takeover_mark_seen(update.symbol, side, now_ms=now_ms)
             self._schedule_protective_stop_sync(
                 update.symbol,
-                reason=f"external_algo:{update.status}:{update.order_type}",
+                reason=f"external_algo:{update.status}:{update.order_type}:{update.close_position}:{update.reduce_only}",
             )
 
     def _on_position_update(self, update: PositionUpdate) -> None:
@@ -906,17 +987,18 @@ class Application:
             await self.protective_stop_manager.on_order_update(update)
             if update.client_order_id.startswith(PROTECTIVE_STOP_PREFIX):
                 self._schedule_protective_stop_sync(update.symbol, reason=f"order_update:{update.status.value}")
-            elif update.close_position is True:
-                # 外部 closePosition 条件单状态变化也可能导致“外部接管/释放”
-                if update.order_type and update.order_type.upper() in _STOP_ORDER_TYPES:
-                    now_ms = current_time_ms()
-                    if update.status in (OrderStatus.CANCELED, OrderStatus.EXPIRED, OrderStatus.FILLED, OrderStatus.REJECTED):
-                        self._clear_external_stop_hint(update.symbol, update.position_side)
-                    else:
-                        self._set_external_stop_hint(update.symbol, update.position_side, now_ms=now_ms)
+            elif update.order_type and update.order_type.upper() in _STOP_ORDER_TYPES and (
+                update.close_position is True or update.reduce_only is True
+            ):
+                # 外部 closePosition 或 reduceOnly 条件单状态变化也可能导致“外部接管/释放”
+                now_ms = current_time_ms()
+                if update.status in (OrderStatus.CANCELED, OrderStatus.EXPIRED, OrderStatus.FILLED, OrderStatus.REJECTED):
+                    self._external_takeover_mark_terminal(update.symbol, update.position_side, now_ms=now_ms)
+                else:
+                    self._external_takeover_mark_seen(update.symbol, update.position_side, now_ms=now_ms)
                 self._schedule_protective_stop_sync(
                     update.symbol,
-                    reason=f"external_close_position:{update.status.value}:{update.order_type}",
+                    reason=f"external_stop:{update.status.value}:{update.order_type}:{update.close_position}:{update.reduce_only}",
                 )
 
     async def _fetch_positions(self) -> None:
@@ -1300,6 +1382,14 @@ class Application:
 
             for position_side in [PositionSide.LONG, PositionSide.SHORT]:
                 await engine.check_timeout(symbol, position_side, current_ms)
+
+            # 外部接管锁存兜底：周期性触发一次保护止损同步，用于 REST 校验释放锁存
+            enabled, _verify_ms, _max_hold_ms = self._get_external_takeover_cfg_ms(symbol)
+            if enabled and any(
+                self._external_takeover_should_verify(symbol, side, now_ms=current_ms)
+                for side in (PositionSide.LONG, PositionSide.SHORT)
+            ):
+                self._schedule_protective_stop_sync(symbol, reason="external_takeover_verify")
 
     async def shutdown(self) -> None:
         """优雅关闭"""

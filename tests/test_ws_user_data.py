@@ -209,6 +209,7 @@ class TestParseOrderUpdate:
         assert result.avg_price == Decimal("0")
         assert result.order_type == "LIMIT"
         assert result.close_position is None
+        assert result.reduce_only is None
 
     def test_parse_order_update_filled(self):
         """测试解析 FILLED 订单"""
@@ -246,6 +247,7 @@ class TestParseOrderUpdate:
         assert result.avg_price == Decimal("3000.50")
         assert result.order_type is None
         assert result.close_position is None
+        assert result.reduce_only is None
 
     def test_parse_order_update_partially_filled(self):
         """测试解析部分成交订单"""
@@ -279,6 +281,7 @@ class TestParseOrderUpdate:
         assert result.avg_price == Decimal("50100.00")
         assert result.order_type is None
         assert result.close_position is None
+        assert result.reduce_only is None
 
     def test_parse_order_update_canceled(self):
         """测试解析取消订单"""
@@ -332,6 +335,7 @@ class TestParseOrderUpdate:
                 "ap": "0",
                 "ps": "LONG",
                 "cp": True,
+                "R": True,
             }
         }
 
@@ -340,6 +344,7 @@ class TestParseOrderUpdate:
         assert result is not None
         assert result.order_type == "STOP_MARKET"
         assert result.close_position is True
+        assert result.reduce_only is True
 
 
 class TestParseAlgoOrderUpdate:

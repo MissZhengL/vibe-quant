@@ -311,6 +311,111 @@ class TestProtectiveStopSync:
 
         exchange.place_order.assert_not_called()
 
+    async def test_sync_skips_when_external_reduce_only_stop_exists(self):
+        exchange = MagicMock(spec=ExchangeAdapter)
+        exchange.fetch_open_orders = AsyncMock(
+            return_value=[
+                {
+                    "id": "ext-1",
+                    "type": "stop_market",
+                    "reduceOnly": True,
+                    "info": {"positionSide": "SHORT", "reduceOnly": True},
+                }
+            ]
+        )
+        exchange.fetch_open_algo_orders = AsyncMock(return_value=[])
+        exchange.place_order = AsyncMock(
+            return_value=OrderResult(success=True, order_id="1", status=OrderStatus.NEW)
+        )
+        exchange.cancel_order = AsyncMock(
+            return_value=OrderResult(success=True, order_id="1", status=OrderStatus.CANCELED)
+        )
+
+        mgr = ProtectiveStopManager(exchange, client_order_id_prefix="vq-ps-")
+        symbol = "BTC/USDT:USDT"
+        rules = SymbolRules(
+            symbol=symbol,
+            tick_size=Decimal("0.1"),
+            step_size=Decimal("0.001"),
+            min_qty=Decimal("0.001"),
+            min_notional=Decimal("5"),
+        )
+        positions = {
+            PositionSide.SHORT: Position(
+                symbol=symbol,
+                position_side=PositionSide.SHORT,
+                position_amt=Decimal("-0.01"),
+                entry_price=Decimal("100"),
+                unrealized_pnl=Decimal("0"),
+                leverage=10,
+                liquidation_price=Decimal("100"),
+                mark_price=Decimal("110"),
+            )
+        }
+
+        await mgr.sync_symbol(
+            symbol=symbol,
+            rules=rules,
+            positions=positions,
+            enabled=True,
+            dist_to_liq=Decimal("0.01"),
+        )
+
+        exchange.place_order.assert_not_called()
+
+    async def test_sync_logs_when_multiple_external_stops_exist(self, monkeypatch):
+        events: list[dict] = []
+
+        def fake_log_event(*_args, **kwargs):
+            events.append(kwargs)
+
+        monkeypatch.setattr("src.risk.protective_stop.log_event", fake_log_event)
+
+        exchange = MagicMock(spec=ExchangeAdapter)
+        exchange.fetch_open_orders = AsyncMock(
+            return_value=[
+                {"id": "ext-1", "type": "stop_market", "reduceOnly": True, "info": {"positionSide": "SHORT"}},
+                {"id": "ext-2", "type": "stop_market", "reduceOnly": True, "info": {"positionSide": "SHORT"}},
+            ]
+        )
+        exchange.fetch_open_algo_orders = AsyncMock(return_value=[])
+        exchange.place_order = AsyncMock(
+            return_value=OrderResult(success=True, order_id="1", status=OrderStatus.NEW)
+        )
+
+        mgr = ProtectiveStopManager(exchange, client_order_id_prefix="vq-ps-")
+        symbol = "BTC/USDT:USDT"
+        rules = SymbolRules(
+            symbol=symbol,
+            tick_size=Decimal("0.1"),
+            step_size=Decimal("0.001"),
+            min_qty=Decimal("0.001"),
+            min_notional=Decimal("5"),
+        )
+        positions = {
+            PositionSide.SHORT: Position(
+                symbol=symbol,
+                position_side=PositionSide.SHORT,
+                position_amt=Decimal("-0.01"),
+                entry_price=Decimal("100"),
+                unrealized_pnl=Decimal("0"),
+                leverage=10,
+                liquidation_price=Decimal("100"),
+                mark_price=Decimal("110"),
+            )
+        }
+
+        await mgr.sync_symbol(
+            symbol=symbol,
+            rules=rules,
+            positions=positions,
+            enabled=True,
+            dist_to_liq=Decimal("0.01"),
+        )
+
+        assert any(e.get("reason") == "external_stop_multiple" and e.get("count") == 2 for e in events)
+        exchange.place_order.assert_not_called()
+
     async def test_sync_startup_logs_existing_external_stop(self, monkeypatch):
         """启动同步时，若已存在外部 closePosition 条件单，应打印一次可读日志。"""
         events: list[dict] = []
@@ -505,7 +610,7 @@ class TestProtectiveStopSync:
         exchange.place_order.assert_not_called()
 
     async def test_sync_skips_when_ws_external_hint_active(self):
-        """WS 提示外部 closePosition 单存在时（保护窗口内），不应下我们自己的保护止损。"""
+        """外部接管锁存时，不应下我们自己的保护止损。"""
         exchange = MagicMock(spec=ExchangeAdapter)
         exchange.fetch_open_orders = AsyncMock(return_value=[])
         exchange.fetch_open_algo_orders = AsyncMock(return_value=[])
@@ -541,13 +646,13 @@ class TestProtectiveStopSync:
             positions=positions,
             enabled=True,
             dist_to_liq=Decimal("0.01"),
-            external_stop_hint_by_side={PositionSide.LONG: True},
+            external_stop_latch_by_side={PositionSide.LONG: True},
         )
 
         exchange.place_order.assert_not_called()
 
     async def test_sync_does_not_modify_existing_order_during_ws_hint(self):
-        """WS 提示外部单存在时，已有我们自己的保护止损单应短暂保留，不撤不建。"""
+        """外部接管锁存时，已有我们自己的保护止损单应短暂保留，不撤不建。"""
         exchange = MagicMock(spec=ExchangeAdapter)
         exchange.fetch_open_orders = AsyncMock(return_value=[])
 
@@ -600,7 +705,7 @@ class TestProtectiveStopSync:
             positions=positions,
             enabled=True,
             dist_to_liq=Decimal("0.01"),
-            external_stop_hint_by_side={PositionSide.SHORT: True},
+            external_stop_latch_by_side={PositionSide.SHORT: True},
         )
 
         exchange.cancel_order.assert_not_called()
