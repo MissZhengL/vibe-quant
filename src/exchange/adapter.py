@@ -18,6 +18,7 @@
 - OrderResult
 """
 
+import re
 from decimal import Decimal
 from typing import Dict, List, Optional, Any, cast
 
@@ -35,7 +36,7 @@ from src.models import (
     OrderResult,
 )
 from src.utils import round_to_tick, round_to_step, round_up_to_step
-from src.utils.logger import get_logger, log_error
+from src.utils.logger import get_logger, log_error, log_order_reject
 
 
 class ExchangeAdapter:
@@ -387,14 +388,35 @@ class ExchangeAdapter:
                 success=False,
                 order_id=None,
                 status=OrderStatus.REJECTED,
+                error_code="INSUFFICIENT_FUNDS",
                 error_message=f"余额不足: {e}",
             )
         except ccxt.InvalidOrder as e:
-            log_error(f"无效订单: {e}", symbol=intent.symbol)
+            raw = str(e)
+            code_match = re.search(r'"code"\s*:\s*(-?\d+)', raw)
+            code = code_match.group(1) if code_match else None
+
+            is_post_only_reject = code == "-5022" or ("post only" in raw.lower())
+            if is_post_only_reject:
+                log_order_reject(
+                    symbol=intent.symbol,
+                    side=intent.position_side.value,
+                    reason="post_only_reject",
+                    code=code,
+                    order_type=intent.order_type.value,
+                    time_in_force=intent.time_in_force.value,
+                    reduce_only=intent.reduce_only,
+                    close_position=intent.close_position,
+                    price=intent.price,
+                    qty=intent.qty,
+                )
+            else:
+                log_error(f"无效订单: {e}", symbol=intent.symbol)
             return OrderResult(
                 success=False,
                 order_id=None,
                 status=OrderStatus.REJECTED,
+                error_code=code,
                 error_message=f"无效订单: {e}",
             )
         except Exception as e:
@@ -403,6 +425,7 @@ class ExchangeAdapter:
                 success=False,
                 order_id=None,
                 status=OrderStatus.REJECTED,
+                error_code="PLACE_ORDER_FAILED",
                 error_message=str(e),
             )
 

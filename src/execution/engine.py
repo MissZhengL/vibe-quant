@@ -398,6 +398,9 @@ class ExecutionEngine:
             state.current_order_reason = None
             state.current_order_is_risk = False
             state.current_order_filled_qty = Decimal("0")
+            # -5022 Post Only rejected 属于“可预期”的交易所拒单，已由 ExchangeAdapter 以结构化日志记录，避免重复刷屏
+            if result.error_code == "-5022":
+                return
             get_logger().warning(f"下单失败: {intent.symbol} {intent.position_side.value} - {result.error_message}")
 
     async def on_order_update(self, update: OrderUpdate, current_ms: int) -> None:

@@ -260,7 +260,14 @@ def log_event(
         if error:
             message = f"{message} | error={error}"
         _logger.error(message)
-    elif event_type in ("ws_disconnect", "ws_reconnect", "order_timeout", "risk_trigger", "rate_limit"):
+    elif event_type in (
+        "ws_disconnect",
+        "ws_reconnect",
+        "order_timeout",
+        "risk_trigger",
+        "rate_limit",
+        "order_reject",
+    ):
         _logger.warning(message)
     elif event_type in ("startup", "shutdown", "signal", "order_fill"):
         _logger.info(message)
@@ -435,4 +442,33 @@ def log_error(
         symbol=symbol,
         error=error,
         **kwargs,
+    )
+
+
+def log_order_reject(
+    symbol: str,
+    side: str,
+    reason: str,
+    code: Optional[str] = None,
+    order_type: Optional[str] = None,
+    time_in_force: Optional[str] = None,
+    reduce_only: Optional[bool] = None,
+    close_position: Optional[bool] = None,
+    price: Optional[Decimal] = None,
+    qty: Optional[Decimal] = None,
+) -> None:
+    """记录下单被拒（可预期错误）事件。"""
+    log_event(
+        "order_reject",
+        event_cn="下单被拒",
+        symbol=symbol,
+        side=side,
+        reason=reason,
+        code=code,
+        order_type=order_type,
+        time_in_force=time_in_force,
+        reduce_only=reduce_only,
+        close_position=close_position,
+        price=price,
+        qty=qty,
     )
