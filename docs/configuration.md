@@ -426,6 +426,51 @@ tiers:
   - 激进: `0.005-0.01` (0.5-1%)
   - 当前配置: 全局 `1%`，ZEN 覆盖为 `1.5%`
 
+##### external_takeover
+外部止损/止盈接管开关与策略。<br>
+当检测到同侧存在“外部 stop/tp 条件单”时，本程序会停止维护自己的保护止损，避免与外部单冲突导致 `-4130` 或出现同侧多张条件单。<br>
+
+**外部接管判定（当前实现）**：
+- **WS 事件**：`ORDER_TRADE_UPDATE` 或 `ALGO_UPDATE` 中，若订单类型为 `STOP/TAKE_PROFIT*` 且（`closePosition=true` **或** `reduceOnly=true`），则视为外部接管。<br>
+- **REST 校验**：通过 `fetch_open_orders` + `fetch_open_algo_orders` 扫描同侧订单，若存在 `STOP/TAKE_PROFIT*` 且（`closePosition=true` **或** `reduceOnly=true`），则视为外部接管。<br>
+
+字段说明：
+
+###### enabled
+- **类型**: `boolean`
+- **默认值**: `true`
+- **说明**: 是否启用外部接管逻辑
+
+###### rest_verify_interval_s
+- **类型**: `int`
+- **默认值**: `30`
+- **说明**: 外部接管锁存期间，触发 REST 校验的最小间隔（秒）<br>
+- **目的**: 防止只靠 WS（或竞态/漏消息）导致接管状态无法释放
+
+###### max_hold_s
+- **类型**: `int`
+- **默认值**: `300`
+- **说明**: 外部接管锁存的最长持续时间（秒）<br>
+- **行为**: 超时后会触发一次 REST 校验兜底（并可能释放接管）
+
+###### skip_log_throttle_s
+- **类型**: `int`
+- **默认值**: `2`
+- **说明**: 外部接管期间 `skip_external_stop*` 日志节流间隔（秒），`0` 表示不节流
+
+**示例配置**:
+```yaml
+risk:
+  protective_stop:
+    enabled: true
+    dist_to_liq: 0.01
+    external_takeover:
+      enabled: true
+      rest_verify_interval_s: 30
+      max_hold_s: 300
+      skip_log_throttle_s: 2
+```
+
 ---
 
 ### 限速配置 (rate_limit)
