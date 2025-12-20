@@ -18,6 +18,23 @@
 | 阶段 11：systemd 部署 | ✅ |
 | **小额实盘验证** | ⏳ |
 
+## Milestone/附加改进：保护性止损“外部接管”事件驱动恢复
+
+**状态**：✅ 已完成<br>
+**日期**：2025-12-20<br>
+**动机**：当交易所/外部已有 `closePosition` 条件单时，本程序选择“外部接管”（撤掉自己并停止维护）。为了避免外部单被手动撤销后本程序无法及时恢复维护，本次补齐了 User Data Stream 的条件单事件解析与触发同步。<br>
+**产出**：
+- `src/models.py`：新增 `AlgoOrderUpdate`；`OrderUpdate` 增加 `order_type/close_position`
+- `src/ws/user_data.py`：支持解析 `ALGO_UPDATE`（Algo Service 条件单更新），并在调试阶段直接打印关键字段（后续可降级为 debug 或移除）
+- `src/main.py`：收到 `ALGO_UPDATE`（或外部 `ORDER_TRADE_UPDATE` 的 `closePosition`）后调度一次 protective stop 同步
+- `tests/test_ws_user_data.py`：新增/更新解析测试覆盖 `cp/o/ALGO_UPDATE`
+<br>
+**补充改进（同批交付）**：<br>
+- 保护性止损只允许“收紧”（LONG stopPrice 只上调；SHORT stopPrice 只下调），避免仓位变安全时把止损越推越远，并减少频繁撤旧建新带来的空窗风险<br>
+- 保护性止损同步采用分级 debounce：`position_update` 1s；`startup/calibration` 0s；其余 0.2s（兼顾 REST 压力与关键场景恢复速度）<br>
+- 启动同步时打印已存在的外部 `closePosition` 条件单（含 order_id/client_id），并在 `skip_external_stop` 时附带外部单关键字段便于排查<br>
+- 测试：补充 `tests/test_protective_stop.py`（只收紧语义/启动外部单日志等）与 `tests/test_main_shutdown.py`（debounce 分级逻辑）
+
 ### 可选后续工作
 
 | 优先级 | 内容 | 来源 |

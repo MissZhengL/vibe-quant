@@ -77,7 +77,7 @@ Binance U 本位永续 Hedge 模式 Reduce-Only 小单平仓执行器。
 | 模块 | 职责 | 输入 | 输出 |
 |------|------|------|------|
 | **ConfigManager** | 加载 YAML 配置，支持 global + symbol 覆盖 | config.yaml | 配置对象 |
-| **WSClient** | 订阅 bookTicker + aggTrade + markPrice@1s + User Data Stream，断线重连，重连后回调触发校准 | 配置 | MarketEvent, OrderUpdate, PositionUpdate |
+| **WSClient** | 订阅 bookTicker + aggTrade + markPrice@1s + User Data Stream，断线重连，重连后回调触发校准 | 配置 | MarketEvent, OrderUpdate, AlgoOrderUpdate, PositionUpdate |
 | **ExchangeAdapter** | ccxt 封装：markets/positions/balance 查询，下单/撤单 | 配置, OrderIntent | OrderResult, Position |
 | **SignalEngine** | 评估平仓触发条件，维护 prev/last trade price；计算 accel/ROI 倍数 | MarketEvent, Position | ExitSignal |
 | **ExecutionEngine** | 状态机管理，下单/撤单/TTL 超时处理 | ExitSignal, 配置 | OrderIntent |
@@ -208,7 +208,7 @@ vibe-quant/
 │   ├── ws/
 │   │   ├── __init__.py
 │   │   ├── market.py         # 市场数据 WS（bookTicker + aggTrade + markPrice@1s）
-│   │   └── user_data.py      # User Data Stream（ORDER_TRADE_UPDATE + ACCOUNT_UPDATE）
+│   │   └── user_data.py      # User Data Stream（ORDER_TRADE_UPDATE + ALGO_UPDATE + ACCOUNT_UPDATE）
 │   ├── signal/
 │   │   ├── __init__.py
 │   │   └── engine.py         # 信号判断（LONG/SHORT 触发条件）
@@ -254,7 +254,7 @@ vibe-quant/
 | `src/utils/helpers.py` | 131 | round_to_tick/round_up_to_tick/round_to_step/round_up_to_step/current_time_ms/symbol 转换 |
 | `src/exchange/adapter.py` | 650 | ExchangeAdapter 类，ccxt 封装（markets/positions/下单/撤单/规整函数） |
 | `src/ws/market.py` | 472 | MarketWSClient 类，bookTicker/aggTrade/markPrice@1s 解析，指数退避重连，陈旧检测，重连回调 |
-| `src/ws/user_data.py` | 608 | UserDataWSClient 类，listenKey 管理 + ORDER_TRADE_UPDATE/ACCOUNT_UPDATE 解析，指数退避重连，重连回调 |
+| `src/ws/user_data.py` | 608 | UserDataWSClient 类，listenKey 管理 + ORDER_TRADE_UPDATE/ALGO_UPDATE/ACCOUNT_UPDATE 解析，指数退避重连，重连回调 |
 | `src/signal/engine.py` | 474 | SignalEngine 类，MarketState 聚合 + LONG/SHORT 信号判断 + 节流 + accel/ROI 倍数 |
 | `src/execution/engine.py` | 874 | ExecutionEngine 类，状态机 + Maker/Aggr 定价 + 超时/冷却管理 + panic_close 支持 |
 | `src/risk/manager.py` | 137 | RiskManager 类，dist_to_liq 风控兜底 + orders/cancels 全局限速 |
@@ -301,6 +301,8 @@ vibe-quant/
 | 2025-12-18 | 简化 accel 配置：合并 `tiers_long`/`tiers_short` 为单一 `tiers`，LONG/SHORT 方向自动处理 |
 | 2025-12-19 | 完善 Symbol 配置覆盖：symbols 可覆盖 execution/accel/roi/risk 全部字段（含 panic_close） |
 | 2025-12-19 | 修复保护止损 Binance Algo API 适配：clientOrderId 唯一化（7天内唯一）、修复 openAlgoOrders 响应格式解析、外部止损单检测（避免 -4130）、日志 Decimal 自动格式化 |
+| 2025-12-20 | 增强用户数据 WS：解析 ALGO_UPDATE 与 ORDER_TRADE_UPDATE 的 closePosition(cp) 字段，并在外部条件单状态变化时触发保护止损同步（外部接管/自动恢复） |
+| 2025-12-20 | 保护性止损策略增强：只允许“收紧”止损（不放松），同步调度采用分级 debounce（position_update 1s，startup/calibration 0s，其余 0.2s），并在启动时打印已存在的外部 closePosition 条件单便于排查 |
 
 ---
 

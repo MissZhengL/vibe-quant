@@ -37,6 +37,7 @@ from src.notify.telegram import TelegramNotifier
 from src.models import (
     MarketEvent,
     OrderUpdate,
+    AlgoOrderUpdate,
     OrderIntent,
     OrderResult,
     OrderStatus,
@@ -61,6 +62,9 @@ from src.utils.helpers import current_time_ms, format_decimal
 
 CLIENT_ORDER_PREFIX = "vq"
 PROTECTIVE_STOP_PREFIX = f"{CLIENT_ORDER_PREFIX}-ps-"
+EXTERNAL_STOP_TTL_MS = 5000  # WS 已见外部 closePosition 条件单时的保护窗口（避免 REST 延迟导致误下单撞 -4130）
+
+_STOP_ORDER_TYPES = {"STOP_MARKET", "TAKE_PROFIT_MARKET", "STOP", "TAKE_PROFIT"}
 
 
 class Application:
@@ -114,6 +118,17 @@ class Application:
         self._position_revision: dict[tuple[str, PositionSide], int] = {}
         self._position_last_change: dict[tuple[str, PositionSide], tuple[Decimal, Decimal]] = {}
         self._panic_last_tier: dict[tuple[str, PositionSide], Decimal] = {}
+        self._external_stop_until_ms: dict[tuple[str, PositionSide], int] = {}
+
+    def _set_external_stop_hint(self, symbol: str, position_side: PositionSide, *, now_ms: int) -> None:
+        self._external_stop_until_ms[(symbol, position_side)] = now_ms + EXTERNAL_STOP_TTL_MS
+
+    def _clear_external_stop_hint(self, symbol: str, position_side: PositionSide) -> None:
+        self._external_stop_until_ms.pop((symbol, position_side), None)
+
+    def _has_external_stop_hint(self, symbol: str, position_side: PositionSide, *, now_ms: int) -> bool:
+        until = self._external_stop_until_ms.get((symbol, position_side))
+        return until is not None and until > now_ms
 
     def _init_run_identity(self) -> None:
         """初始化本次运行的标识（用于 newClientOrderId 前缀）。"""
@@ -200,14 +215,17 @@ class Application:
         if not self.exchange or not self.protective_stop_manager:
             return
 
+        debounce_s = self._protective_stop_debounce_s(reason)
+
         prev = self._protective_stop_tasks.get(symbol)
         if prev and not prev.done():
             prev.cancel()
 
         async def _runner() -> None:
             try:
-                # debounce：合并短时间内的多次 position/order 更新
-                await asyncio.sleep(0.2)
+                # debounce：合并短时间内的多次触发（按 reason 分级）
+                if debounce_s > 0:
+                    await asyncio.sleep(debounce_s)
                 await self._sync_protective_stop(symbol=symbol, reason=reason)
             except asyncio.CancelledError:
                 return
@@ -217,6 +235,21 @@ class Application:
         task = asyncio.create_task(_runner())
         self._protective_stop_tasks[symbol] = task
         task.add_done_callback(lambda t, s=symbol, n=f"protective_stop_sync:{symbol}": self._on_protective_stop_task_done(t, s, n))
+
+    @staticmethod
+    def _protective_stop_debounce_s(reason: str) -> float:
+        """
+        保护止损同步的分级 debounce。
+
+        - position_update: 平仓频繁，延迟高一点降 REST 压力
+        - startup/calibration: 立即同步，尽快确保保护单存在
+        - 其他（our_algo/order_update/external_* 等）：保持较快响应
+        """
+        if reason.startswith("position_update"):
+            return 1.0
+        if reason.startswith("startup") or reason.startswith("calibration"):
+            return 0.0
+        return 0.2
 
     async def _sync_protective_stop(self, *, symbol: str, reason: str) -> None:
         """执行保护止损同步（会访问交易所 openOrders）。"""
@@ -228,12 +261,19 @@ class Application:
             return
 
         try:
+            now_ms = current_time_ms()
+            external_hint = {
+                PositionSide.LONG: self._has_external_stop_hint(symbol, PositionSide.LONG, now_ms=now_ms),
+                PositionSide.SHORT: self._has_external_stop_hint(symbol, PositionSide.SHORT, now_ms=now_ms),
+            }
             await self.protective_stop_manager.sync_symbol(
                 symbol=symbol,
                 rules=rules,
                 positions=self._positions.get(symbol, {}),
                 enabled=cfg.protective_stop_enabled,
                 dist_to_liq=cfg.protective_stop_dist_to_liq,
+                external_stop_hint_by_side=external_hint,
+                sync_reason=reason,
             )
         except Exception as e:
             log_error(f"保护止损同步异常: {e}", symbol=symbol, reason=reason)
@@ -586,6 +626,7 @@ class Application:
             api_key=self.config_loader.api_key,
             api_secret=self.config_loader.api_secret,
             on_order_update=self._on_order_update,
+            on_algo_order_update=self._on_algo_order_update,
             on_position_update=self._on_position_update,
             on_reconnect=self._on_ws_reconnect,
             testnet=global_config.testnet,
@@ -726,6 +767,46 @@ class Application:
         if self._running:
             asyncio.create_task(self._handle_order_update(update))
 
+    def _on_algo_order_update(self, update: AlgoOrderUpdate) -> None:
+        """处理 Algo 条件单更新回调（ALGO_UPDATE）。"""
+        if not self._running:
+            return
+
+        # 只跟踪配置中已启用的 symbols
+        if update.symbol not in self.execution_engines:
+            return
+
+        # 1. 我们自己的保护止损单：用前缀匹配，无条件触发 sync（不依赖 cp）
+        if update.client_algo_id and update.client_algo_id.startswith(PROTECTIVE_STOP_PREFIX):
+            if self.protective_stop_manager:
+                self.protective_stop_manager.on_algo_order_update(update)
+            self._schedule_protective_stop_sync(
+                update.symbol,
+                reason=f"our_algo:{update.status}",
+            )
+            return
+
+        # 2. 外部 closePosition 条件单：仍以 cp=True 为准（保守）
+        if update.close_position is True:
+            now_ms = current_time_ms()
+            if update.position_side == PositionSide.LONG:
+                sides = [PositionSide.LONG]
+            elif update.position_side == PositionSide.SHORT:
+                sides = [PositionSide.SHORT]
+            else:
+                # ps 不明确时（例如 BOTH），保守认为两边都可能被外部条件单占用
+                sides = [PositionSide.LONG, PositionSide.SHORT]
+            terminal = update.status.upper() in {"CANCELED", "EXPIRED", "FINISHED", "REJECTED"}
+            for side in sides:
+                if terminal:
+                    self._clear_external_stop_hint(update.symbol, side)
+                else:
+                    self._set_external_stop_hint(update.symbol, side, now_ms=now_ms)
+            self._schedule_protective_stop_sync(
+                update.symbol,
+                reason=f"external_algo:{update.status}:{update.order_type}",
+            )
+
     def _on_position_update(self, update: PositionUpdate) -> None:
         """处理仓位更新回调（ACCOUNT_UPDATE）。"""
         if not self._running:
@@ -825,6 +906,18 @@ class Application:
             await self.protective_stop_manager.on_order_update(update)
             if update.client_order_id.startswith(PROTECTIVE_STOP_PREFIX):
                 self._schedule_protective_stop_sync(update.symbol, reason=f"order_update:{update.status.value}")
+            elif update.close_position is True:
+                # 外部 closePosition 条件单状态变化也可能导致“外部接管/释放”
+                if update.order_type and update.order_type.upper() in _STOP_ORDER_TYPES:
+                    now_ms = current_time_ms()
+                    if update.status in (OrderStatus.CANCELED, OrderStatus.EXPIRED, OrderStatus.FILLED, OrderStatus.REJECTED):
+                        self._clear_external_stop_hint(update.symbol, update.position_side)
+                    else:
+                        self._set_external_stop_hint(update.symbol, update.position_side, now_ms=now_ms)
+                self._schedule_protective_stop_sync(
+                    update.symbol,
+                    reason=f"external_close_position:{update.status.value}:{update.order_type}",
+                )
 
     async def _fetch_positions(self) -> None:
         """获取所有仓位"""

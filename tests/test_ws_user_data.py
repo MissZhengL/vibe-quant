@@ -19,7 +19,7 @@ from src.ws.user_data import (
     WS_TESTNET_URL,
     KEEPALIVE_INTERVAL_MS,
 )
-from src.models import OrderUpdate, OrderSide, PositionSide, OrderStatus, PositionUpdate
+from src.models import AlgoOrderUpdate, OrderUpdate, OrderSide, PositionSide, OrderStatus, PositionUpdate
 from src.utils.logger import setup_logger
 
 
@@ -207,6 +207,8 @@ class TestParseOrderUpdate:
         assert result.status == OrderStatus.NEW
         assert result.filled_qty == Decimal("0")
         assert result.avg_price == Decimal("0")
+        assert result.order_type == "LIMIT"
+        assert result.close_position is None
 
     def test_parse_order_update_filled(self):
         """测试解析 FILLED 订单"""
@@ -242,6 +244,8 @@ class TestParseOrderUpdate:
         assert result.status == OrderStatus.FILLED
         assert result.filled_qty == Decimal("0.5")
         assert result.avg_price == Decimal("3000.50")
+        assert result.order_type is None
+        assert result.close_position is None
 
     def test_parse_order_update_partially_filled(self):
         """测试解析部分成交订单"""
@@ -273,6 +277,8 @@ class TestParseOrderUpdate:
         assert result.status == OrderStatus.PARTIALLY_FILLED
         assert result.filled_qty == Decimal("0.005")
         assert result.avg_price == Decimal("50100.00")
+        assert result.order_type is None
+        assert result.close_position is None
 
     def test_parse_order_update_canceled(self):
         """测试解析取消订单"""
@@ -302,6 +308,108 @@ class TestParseOrderUpdate:
 
         assert result is not None
         assert result.status == OrderStatus.CANCELED
+
+    def test_parse_order_update_close_position(self):
+        """测试解析 closePosition 字段（cp）"""
+        updates: List[OrderUpdate] = []
+        client = UserDataWSClient(
+            api_key="key",
+            api_secret="secret",
+            on_order_update=updates.append,
+        )
+
+        data = {
+            "e": "ORDER_TRADE_UPDATE",
+            "E": 1591097736594,
+            "o": {
+                "s": "BTCUSDT",
+                "c": "client_cp",
+                "S": "SELL",
+                "o": "STOP_MARKET",
+                "X": "NEW",
+                "i": 33333333,
+                "z": "0",
+                "ap": "0",
+                "ps": "LONG",
+                "cp": True,
+            }
+        }
+
+        result = client._parse_order_update(data)
+
+        assert result is not None
+        assert result.order_type == "STOP_MARKET"
+        assert result.close_position is True
+
+
+class TestParseAlgoOrderUpdate:
+    """ALGO_UPDATE 解析测试"""
+
+    def test_parse_algo_update_basic(self):
+        updates: List[AlgoOrderUpdate] = []
+        client = UserDataWSClient(
+            api_key="key",
+            api_secret="secret",
+            on_order_update=lambda _: None,
+            on_algo_order_update=updates.append,
+        )
+
+        data = {
+            "e": "ALGO_UPDATE",
+            "T": 1750515742297,
+            "E": 1750515742303,
+            "o": {
+                "caid": "external_caid",
+                "aid": 2148719,
+                "o": "STOP",
+                "s": "BTCUSDT",
+                "S": "SELL",
+                "ps": "LONG",
+                "X": "CANCELED",
+                "cp": True,
+                "R": True,
+            }
+        }
+
+        result = client._parse_algo_order_update(data)
+        assert result is not None
+        assert result.symbol == "BTC/USDT:USDT"
+        assert result.algo_id == "2148719"
+        assert result.client_algo_id == "external_caid"
+        assert result.side == OrderSide.SELL
+        assert result.position_side == PositionSide.LONG
+        assert result.status == "CANCELED"
+        assert result.close_position is True
+        assert result.reduce_only is True
+
+    @pytest.mark.asyncio
+    async def test_handle_algo_update_calls_callback(self):
+        updates: List[AlgoOrderUpdate] = []
+        client = UserDataWSClient(
+            api_key="key",
+            api_secret="secret",
+            on_order_update=lambda _: None,
+            on_algo_order_update=updates.append,
+        )
+
+        message = {
+            "e": "ALGO_UPDATE",
+            "E": 1750515742303,
+            "o": {
+                "caid": "external_caid",
+                "aid": 2148719,
+                "o": "STOP",
+                "s": "BTCUSDT",
+                "S": "SELL",
+                "ps": "LONG",
+                "X": "NEW",
+                "cp": True,
+            },
+        }
+
+        await client._handle_message(message)
+        assert len(updates) == 1
+        assert updates[0].symbol == "BTC/USDT:USDT"
 
     def test_parse_order_update_empty_data(self):
         """测试解析空订单数据"""

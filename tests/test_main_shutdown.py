@@ -98,3 +98,11 @@ async def test_main_loop_spawns_side_tasks_and_shutdown_cancels_them():
 
     await asyncio.wait_for(app.shutdown(), timeout=2.0)
     assert len(app._side_tasks) == 0
+
+
+def test_protective_stop_debounce_classification():
+    assert Application._protective_stop_debounce_s("position_update:LONG") == 1.0
+    assert Application._protective_stop_debounce_s("startup") == 0.0
+    assert Application._protective_stop_debounce_s("calibration:user_data") == 0.0
+    assert Application._protective_stop_debounce_s("order_update:FILLED") == 0.2
+    assert Application._protective_stop_debounce_s("our_algo:CANCELED") == 0.2

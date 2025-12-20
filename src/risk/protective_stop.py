@@ -20,6 +20,7 @@ from typing import Any, Dict, Optional, Sequence
 
 from src.exchange.adapter import ExchangeAdapter
 from src.models import (
+    AlgoOrderUpdate,
     OrderIntent,
     OrderSide,
     OrderType,
@@ -55,6 +56,8 @@ class ProtectiveStopManager:
         self._client_order_id_prefix = client_order_id_prefix
         self._states: Dict[tuple[str, PositionSide], ProtectiveStopState] = {}
         self._locks: Dict[str, asyncio.Lock] = {}
+        self._startup_existing_logged: set[tuple[str, PositionSide]] = set()
+        self._startup_existing_external_logged: set[tuple[str, PositionSide]] = set()
 
     def _get_lock(self, symbol: str) -> asyncio.Lock:
         lock = self._locks.get(symbol)
@@ -175,19 +178,59 @@ class ProtectiveStopManager:
             return None
         return value if value > Decimal("0") else None
 
+    def _extract_order_type(self, order: Dict[str, Any]) -> Optional[str]:
+        order_type_candidates = (
+            order.get("orderType"),
+            order.get("type"),
+            order.get("algoType"),
+        )
+        order_type = next((x for x in order_type_candidates if isinstance(x, str) and x.strip()), None)
+        if order_type is None:
+            info = order.get("info")
+            if isinstance(info, dict):
+                info_candidates = (
+                    info.get("orderType"),
+                    info.get("type"),
+                    info.get("algoType"),
+                )
+                order_type = next((x for x in info_candidates if isinstance(x, str) and x.strip()), None)
+        if order_type is None:
+            return None
+        return order_type.strip().upper()
+
+    @staticmethod
+    def _coerce_bool(value: Any) -> Optional[bool]:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            if value == 1:
+                return True
+            if value == 0:
+                return False
+        if isinstance(value, str):
+            v = value.strip().lower()
+            if v in ("true", "1", "yes", "y"):
+                return True
+            if v in ("false", "0", "no", "n"):
+                return False
+        return None
+
     def _is_close_position_stop(self, order: Dict[str, Any]) -> bool:
         """检查订单是否是 closePosition 止损单（STOP_MARKET + closePosition=true）"""
         info = order.get("info")
         if not isinstance(info, dict):
+            info = {}
+
+        close_pos = self._coerce_bool(order.get("closePosition"))
+        if close_pos is None:
+            close_pos = self._coerce_bool(info.get("closePosition"))
+        if close_pos is not True:
             return False
-        # 检查 closePosition 字段
-        close_pos = info.get("closePosition")
-        if close_pos in (True, "true", "TRUE"):
-            # 再确认是止损类型
-            order_type = info.get("type", "").upper()
-            if order_type in ("STOP_MARKET", "TAKE_PROFIT_MARKET", "STOP", "TAKE_PROFIT"):
-                return True
-        return False
+
+        order_type = self._extract_order_type({**order, "info": info})
+        return order_type in ("STOP_MARKET", "TAKE_PROFIT_MARKET", "STOP", "TAKE_PROFIT")
 
     async def on_order_update(self, update: OrderUpdate) -> None:
         """处理订单更新：当保护止损成交/撤销后，清理本地状态并触发一次同步。"""
@@ -210,6 +253,36 @@ class ProtectiveStopManager:
                     order_id=update.order_id,
                 )
 
+    def on_algo_order_update(self, update: AlgoOrderUpdate) -> None:
+        """
+        处理 Algo Order 更新（ALGO_UPDATE 事件）。
+
+        当我们的保护止损单状态变化时，清理本地状态。
+        注：只处理我们自己的订单（由 main.py 在调用前用前缀过滤）。
+        """
+        # Algo Order 终态
+        terminal_statuses = {"CANCELED", "FILLED", "TRIGGERED", "EXPIRED", "REJECTED", "FINISHED"}
+        if update.status.upper() not in terminal_statuses:
+            return
+
+        for side in (PositionSide.LONG, PositionSide.SHORT):
+            key = (update.symbol, side)
+            state = self._states.get(key)
+            if not state:
+                continue
+            # 前缀匹配
+            if not self._match_client_order_id(update.client_algo_id, update.symbol, side):
+                continue
+            self._states.pop(key, None)
+            log_event(
+                "protective_stop",
+                event_cn="保护止损",
+                symbol=update.symbol,
+                side=side.value,
+                reason=f"algo_update={update.status}",
+                algo_id=update.algo_id,
+            )
+
     async def sync_symbol(
         self,
         *,
@@ -218,6 +291,8 @@ class ProtectiveStopManager:
         positions: Dict[PositionSide, Position],
         enabled: bool,
         dist_to_liq: Decimal,
+        external_stop_hint_by_side: Optional[Dict[PositionSide, bool]] = None,
+        sync_reason: Optional[str] = None,
     ) -> None:
         """同步某个 symbol 的保护止损（会访问交易所 openOrders 和 openAlgoOrders）。"""
         async with self._get_lock(symbol):
@@ -234,6 +309,38 @@ class ProtectiveStopManager:
             # 分类订单：我们自己的（前缀匹配）vs 外部的 closePosition 止损单
             orders_by_side: Dict[PositionSide, list[Dict[str, Any]]] = {PositionSide.LONG: [], PositionSide.SHORT: []}
             external_stops_by_side: Dict[PositionSide, bool] = {PositionSide.LONG: False, PositionSide.SHORT: False}
+            external_hint_by_side = external_stop_hint_by_side or {}
+            external_stop_sample_by_side: Dict[PositionSide, Dict[str, Any]] = {}
+
+            # DEBUG: 打印 algo 订单原始数据
+            from src.utils.logger import get_logger
+            logger = get_logger()
+            if algo_orders:
+                for order in algo_orders:
+                    cid = self._extract_client_order_id(order)
+                    ps = self._extract_position_side(order)
+                    is_cp = self._is_close_position_stop(order)
+                    cp_top = order.get("closePosition") if isinstance(order, dict) else None
+                    cp_info = (
+                        order.get("info", {}).get("closePosition")
+                        if isinstance(order, dict) and isinstance(order.get("info"), dict)
+                        else None
+                    )
+                    ot_top = order.get("orderType") if isinstance(order, dict) else None
+                    ot_info = (
+                        order.get("info", {}).get("orderType")
+                        if isinstance(order, dict) and isinstance(order.get("info"), dict)
+                        else None
+                    )
+                    prefix_l = self._build_client_order_id_prefix(symbol, PositionSide.LONG)
+                    prefix_s = self._build_client_order_id_prefix(symbol, PositionSide.SHORT)
+                    logger.info(
+                        f"[DEBUG] algo_order: cid={cid}, ps={ps}, is_closePosition={is_cp}, "
+                        f"closePosition(top/info)={cp_top}/{cp_info}, orderType(top/info)={ot_top}/{ot_info}, "
+                        f"prefix_L={prefix_l}, prefix_S={prefix_s}, "
+                        f"match_L={cid and cid.startswith(prefix_l)}, match_S={cid and cid.startswith(prefix_s)}, "
+                        f"raw_keys={list(order.keys()) if isinstance(order, dict) else 'not_dict'}"
+                    )
 
             for order in all_orders:
                 if not isinstance(order, dict):
@@ -249,6 +356,45 @@ class ProtectiveStopManager:
                 elif self._is_close_position_stop(order):
                     # 外部的 closePosition 止损单
                     external_stops_by_side[ps] = True
+                    external_stop_sample_by_side.setdefault(ps, order)
+
+            if sync_reason == "startup":
+                for side in (PositionSide.LONG, PositionSide.SHORT):
+                    key = (symbol, side)
+                    if key in self._startup_existing_logged:
+                        continue
+                    existing = orders_by_side.get(side) or []
+                    if not existing:
+                        continue
+                    first = existing[0]
+                    self._startup_existing_logged.add(key)
+                    log_event(
+                        "protective_stop",
+                        event_cn="保护止损",
+                        symbol=symbol,
+                        side=side.value,
+                        reason="startup_existing_own_stop",
+                        count=len(existing),
+                        order_id=self._extract_order_id(first),
+                        client_order_id=self._extract_client_order_id(first),
+                    )
+                for side in (PositionSide.LONG, PositionSide.SHORT):
+                    key = (symbol, side)
+                    if key in self._startup_existing_external_logged:
+                        continue
+                    if not external_stops_by_side.get(side, False):
+                        continue
+                    sample = external_stop_sample_by_side.get(side)
+                    self._startup_existing_external_logged.add(key)
+                    log_event(
+                        "protective_stop",
+                        event_cn="保护止损",
+                        symbol=symbol,
+                        side=side.value,
+                        reason="startup_existing_external_stop",
+                        order_id=self._extract_order_id(sample) if sample else None,
+                        client_order_id=self._extract_client_order_id(sample) if sample else None,
+                    )
 
             for side in (PositionSide.LONG, PositionSide.SHORT):
                 await self._sync_side(
@@ -260,6 +406,8 @@ class ProtectiveStopManager:
                     dist_to_liq=dist_to_liq,
                     existing_orders=orders_by_side.get(side) or [],
                     has_external_stop=external_stops_by_side.get(side, False),
+                    external_stop_sample=external_stop_sample_by_side.get(side),
+                    has_external_stop_hint=bool(external_hint_by_side.get(side, False)),
                 )
 
     async def _sync_side(
@@ -273,6 +421,8 @@ class ProtectiveStopManager:
         dist_to_liq: Decimal,
         existing_orders: Sequence[Dict[str, Any]],
         has_external_stop: bool = False,
+        external_stop_sample: Optional[Dict[str, Any]] = None,
+        has_external_stop_hint: bool = False,
     ) -> None:
         desired_cid = self.build_client_order_id(symbol, side)
 
@@ -314,15 +464,66 @@ class ProtectiveStopManager:
         if position is None:
             return
 
-        # 已有外部 closePosition 止损单：跳过，不重复下单
-        if has_external_stop and keep_order is None:
+        # 已有外部 closePosition 止损/止盈单：外部接管（撤掉我们自己的，且停止维护）
+        if has_external_stop:
+            external_order_id = self._extract_order_id(external_stop_sample) if external_stop_sample else None
+            external_client_order_id = (
+                self._extract_client_order_id(external_stop_sample) if external_stop_sample else None
+            )
+            external_stop_price = self._extract_stop_price(external_stop_sample) if external_stop_sample else None
+            external_order_type = (
+                self._extract_order_type(external_stop_sample) if isinstance(external_stop_sample, dict) else None
+            )
+
+            if keep_order is not None:
+                order_id = self._extract_order_id(keep_order)
+                if order_id:
+                    try:
+                        await self._exchange.cancel_order(symbol, order_id)
+                        log_event(
+                            "protective_stop",
+                            event_cn="保护止损",
+                            symbol=symbol,
+                            side=side.value,
+                            reason="cancel_own_due_to_external_stop",
+                            order_id=order_id,
+                        )
+                    except Exception as e:
+                        log_error(f"保护止损撤单失败: {e}", symbol=symbol, order_id=order_id)
+                        return
+            self._states.pop((symbol, side), None)
             log_event(
                 "protective_stop",
                 event_cn="保护止损",
                 symbol=symbol,
                 side=side.value,
                 reason="skip_external_stop",
+                external_order_id=external_order_id,
+                external_client_order_id=external_client_order_id,
+                external_order_type=external_order_type,
+                external_stop_price=str(external_stop_price) if external_stop_price is not None else None,
             )
+            return
+
+        # WS 外部 stop 提示：在保护窗口内避免对保护止损做“撤旧建新”，减少 -4130 竞态风险
+        if has_external_stop_hint:
+            if keep_order is None:
+                log_event(
+                    "protective_stop",
+                    event_cn="保护止损",
+                    symbol=symbol,
+                    side=side.value,
+                    reason="skip_external_stop_ws_hint",
+                )
+            else:
+                log_event(
+                    "protective_stop",
+                    event_cn="保护止损",
+                    symbol=symbol,
+                    side=side.value,
+                    reason="skip_external_stop_ws_hint_keep",
+                    order_id=self._extract_order_id(keep_order),
+                )
             return
 
         liquidation_price = position.liquidation_price
@@ -352,13 +553,42 @@ class ProtectiveStopManager:
         existing_cid = self._extract_client_order_id(keep_order) if keep_order is not None else None
 
         # stopPrice 相同：更新本地缓存即可
-        if keep_order is not None and existing_stop_price is not None and existing_stop_price == desired_stop_price:
+        # 注意：交易所/ccxt 可能以 float 返回 triggerPrice，直接 Decimal 精确比较会抖动
+        if keep_order is not None and existing_stop_price is not None:
+            existing_norm = round_to_tick(existing_stop_price, rules.tick_size)
+            desired_norm = round_to_tick(desired_stop_price, rules.tick_size)
+        else:
+            existing_norm = None
+            desired_norm = None
+
+        # 只允许“收紧”止损：禁止把 stopPrice 往“更远/更松”方向移动
+        # LONG：stopPrice 越高越早触发（更紧），不允许下调
+        # SHORT：stopPrice 越低越早触发（更紧），不允许上调
+        if (
+            keep_order is not None
+            and existing_norm is not None
+            and desired_norm is not None
+            and (
+                (side == PositionSide.LONG and desired_norm < existing_norm)
+                or (side == PositionSide.SHORT and desired_norm > existing_norm)
+            )
+        ):
+            self._states[(symbol, side)] = ProtectiveStopState(
+                symbol=symbol,
+                position_side=side,
+                client_order_id=existing_cid or desired_cid,
+                order_id=existing_order_id,
+                stop_price=existing_norm,
+            )
+            return
+
+        if keep_order is not None and existing_norm is not None and desired_norm is not None and existing_norm == desired_norm:
             self._states[(symbol, side)] = ProtectiveStopState(
                 symbol=symbol,
                 position_side=side,
                 client_order_id=existing_cid or desired_cid,  # 使用现有订单的实际 cid
                 order_id=existing_order_id,
-                stop_price=existing_stop_price,
+                stop_price=existing_norm,
             )
             return
 

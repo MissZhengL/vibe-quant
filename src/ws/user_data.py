@@ -4,7 +4,7 @@ User Data Stream WebSocket 模块
 职责：
 - 获取并维护 listenKey
 - 连接 User Data Stream
-- 监听 ORDER_TRADE_UPDATE 事件
+- 监听 ORDER_TRADE_UPDATE / ALGO_UPDATE 事件
 - listenKey 每 30 分钟续期
 - 断线自动重连（指数退避）
 
@@ -25,7 +25,14 @@ import aiohttp
 import websockets
 from websockets import ClientConnection
 
-from src.models import OrderUpdate, OrderSide, PositionSide, OrderStatus, PositionUpdate
+from src.models import (
+    AlgoOrderUpdate,
+    OrderUpdate,
+    OrderSide,
+    PositionSide,
+    OrderStatus,
+    PositionUpdate,
+)
 from src.utils.logger import (
     get_logger,
     log_ws_connect,
@@ -63,6 +70,7 @@ class UserDataWSClient:
         api_key: str,
         api_secret: str,
         on_order_update: Callable[[OrderUpdate], None],
+        on_algo_order_update: Optional[Callable[[AlgoOrderUpdate], None]] = None,
         on_position_update: Optional[Callable[[PositionUpdate], None]] = None,
         on_reconnect: Optional[Callable[[str], None]] = None,
         testnet: bool = False,
@@ -78,6 +86,7 @@ class UserDataWSClient:
             api_key: API Key
             api_secret: API Secret
             on_order_update: 收到订单更新时的回调
+            on_algo_order_update: 收到 Algo 条件单更新时的回调（ALGO_UPDATE）
             on_position_update: 收到仓位更新时的回调（ACCOUNT_UPDATE）
             on_reconnect: WS 重连成功回调（用于触发上层 REST 校准）
             testnet: 是否使用测试网
@@ -89,6 +98,7 @@ class UserDataWSClient:
         self.api_key = api_key
         self.api_secret = api_secret
         self.on_order_update = on_order_update
+        self.on_algo_order_update = on_algo_order_update
         self.on_position_update = on_position_update
         self.on_reconnect = on_reconnect
         self.testnet = testnet
@@ -359,6 +369,12 @@ class UserDataWSClient:
                 self.on_order_update(order_update)
             return
 
+        if event_type == "ALGO_UPDATE":
+            algo_update = self._parse_algo_order_update(data)
+            if algo_update and self.on_algo_order_update:
+                self.on_algo_order_update(algo_update)
+            return
+
         if event_type == "ACCOUNT_UPDATE":
             if not self.on_position_update:
                 return
@@ -436,8 +452,19 @@ class UserDataWSClient:
             filled_qty = Decimal(str(order_data.get("z", "0")))
             avg_price = Decimal(str(order_data.get("ap", "0")))
 
+            order_type = order_data.get("o")
+            close_position = order_data.get("cp")
+
             # 时间戳
             timestamp_ms = int(data.get("T", 0)) or int(data.get("E", 0)) or current_time_ms()
+
+            if close_position is True or (
+                isinstance(order_type, str) and order_type in ("STOP_MARKET", "TAKE_PROFIT_MARKET", "STOP", "TAKE_PROFIT")
+            ):
+                get_logger().info(
+                    f"[WS_RAW] ORDER_TRADE_UPDATE symbol={symbol} oid={order_data.get('i')} cid={order_data.get('c')} "
+                    f"type={order_type} ps={order_data.get('ps')} cp={close_position} X={order_data.get('X')} x={order_data.get('x')}"
+                )
 
             return OrderUpdate(
                 symbol=symbol,
@@ -449,10 +476,70 @@ class UserDataWSClient:
                 filled_qty=filled_qty,
                 avg_price=avg_price,
                 timestamp_ms=timestamp_ms,
+                order_type=str(order_type) if order_type is not None else None,
+                close_position=bool(close_position) if isinstance(close_position, bool) else None,
             )
 
         except Exception as e:
             log_error(f"解析 ORDER_TRADE_UPDATE 失败: {e}")
+            return None
+
+    def _parse_algo_order_update(self, data: Dict[str, Any]) -> Optional[AlgoOrderUpdate]:
+        """
+        解析 ALGO_UPDATE 事件（Algo Service 条件单更新）
+
+        参考 Binance 文档：User Data Streams - Event Algo Order Update
+        """
+        try:
+            order_data = data.get("o", {})
+            if not isinstance(order_data, dict) or not order_data:
+                return None
+
+            ws_symbol = order_data.get("s", "")
+            symbol = self._ws_to_symbol(ws_symbol)
+
+            side_str = order_data.get("S", "")
+            side = OrderSide.BUY if side_str == "BUY" else OrderSide.SELL
+
+            ps_str = order_data.get("ps", "")
+            position_side: Optional[PositionSide]
+            if ps_str == "LONG":
+                position_side = PositionSide.LONG
+            elif ps_str == "SHORT":
+                position_side = PositionSide.SHORT
+            else:
+                position_side = None
+
+            algo_id = str(order_data.get("aid", ""))
+            client_algo_id = str(order_data.get("caid", ""))
+            status = str(order_data.get("X", ""))
+
+            order_type = order_data.get("o")
+            close_position = order_data.get("cp")
+            reduce_only = order_data.get("R")
+
+            timestamp_ms = int(data.get("T", 0)) or int(data.get("E", 0)) or current_time_ms()
+
+            if close_position is True:
+                get_logger().info(
+                    f"[WS_RAW] ALGO_UPDATE symbol={symbol} aid={algo_id} caid={client_algo_id} "
+                    f"type={order_type} ps={ps_str} cp={close_position} X={status}"
+                )
+
+            return AlgoOrderUpdate(
+                symbol=symbol,
+                algo_id=algo_id,
+                client_algo_id=client_algo_id,
+                side=side,
+                status=status,
+                timestamp_ms=timestamp_ms,
+                order_type=str(order_type) if order_type is not None else None,
+                position_side=position_side,
+                close_position=bool(close_position) if isinstance(close_position, bool) else None,
+                reduce_only=bool(reduce_only) if isinstance(reduce_only, bool) else None,
+            )
+        except Exception as e:
+            log_error(f"解析 ALGO_UPDATE 失败: {e}")
             return None
 
     def _parse_account_update(self, data: Dict[str, Any]) -> List[PositionUpdate]:

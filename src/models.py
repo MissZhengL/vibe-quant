@@ -241,7 +241,31 @@ class OrderUpdate:
     filled_qty: Decimal
     avg_price: Decimal
     timestamp_ms: int
+    order_type: Optional[str] = None  # WS 字段 o.o，例如 LIMIT / STOP_MARKET / TAKE_PROFIT_MARKET
+    close_position: Optional[bool] = None  # WS 字段 o.cp，closePosition/Close-All
 
+
+# ============================================================
+# Algo 条件单（User Data Stream: ALGO_UPDATE）
+# ============================================================
+
+@dataclass
+class AlgoOrderUpdate:
+    """
+    Algo 条件单更新事件（从 User Data Stream 接收）
+
+    参考 Binance 文档：User Data Streams - Event Algo Order Update (ALGO_UPDATE)
+    """
+    symbol: str
+    algo_id: str
+    client_algo_id: str
+    side: OrderSide
+    status: str  # NEW / CANCELED / TRIGGERING / TRIGGERED / FINISHED / REJECTED / EXPIRED ...
+    timestamp_ms: int
+    order_type: Optional[str] = None  # WS 字段 o.o，例如 STOP / TAKE_PROFIT
+    position_side: Optional[PositionSide] = None  # WS 字段 o.ps，可能为 BOTH
+    close_position: Optional[bool] = None  # WS 字段 o.cp，If Close-All
+    reduce_only: Optional[bool] = None  # WS 字段 o.R
 
 # ============================================================
 # 执行状态
