@@ -296,9 +296,11 @@ grep "\\[PROTECTIVE_STOP\\]" logs/*.log | grep "external_stop_multiple" | tail -
 
 ### 问题：订单被拒绝，错误码 `-5022`
 
-**完整错误**：`ReduceOnly order is rejected`
+**典型错误**：`Post Only order will be rejected` / `Due to the order could not be executed as maker ...`<br>
 
-**原因**：Reduce-Only 订单会立即成交（Maker 订单违反 Post-only 规则）
+**原因**：`MAKER_ONLY` 模式使用 Post-only（`timeInForce=GTX`）。当你挂出的价格会立即以 taker 方式成交时，交易所会直接拒绝该订单（不会进入订单历史）。<br>
+
+**系统行为（预期）**：该类拒单会打印为 `ORDER_REJECT`（WARNING，`cn=下单被拒`，`reason=post_only_reject`），用于减少噪音与避免重复报错刷屏。<br>
 
 **解决方案**：
 
