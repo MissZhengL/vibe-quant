@@ -74,10 +74,12 @@ global:
       panic_close: 2
       protective_stop: 3
 
-    # 第一等级：距离强平价多少比例时切换到 AGGRESSIVE_LIMIT 模式
+    # 第一等级：满足触发条件的情况下，距离强平价多少比例时开始 切换到 AGGRESSIVE_LIMIT 模式（更激进的平仓）
+    # liq_distance_threshold = abs(mark_price - liquidation_price) / mark_price
     liq_distance_threshold: 0.05
 
-    # 第二等级：距离强平价多少比例时按梯度强制平仓
+    # 第二等级：不管是否满足触发条件，距离强平价多少比例时开始 按梯度平仓
+    # 平仓时先尝试限价，如果超时未成交则使用 AGGRESSIVE_LIMIT
     panic_close:
       enabled: true
       ttl_percent: 0.5
@@ -86,7 +88,9 @@ global:
         - { dist_to_liq: 0.03, slice_ratio: 0.05, maker_timeouts_to_escalate: 2 }
         - { dist_to_liq: 0.02, slice_ratio: 0.10, maker_timeouts_to_escalate: 2 }
 
-    # 第三等级：仓位保护性止损（交易所端条件单）
+    # 第三等级：仓位保护性止损（交易所端条件单，防程序崩溃/休眠/断网/意外事件等）
+    # - 使用 STOP_MARKET + closePosition
+    # - workingType=MARK_PRICE（按标记价格触发）
     protective_stop:
       enabled: true
       dist_to_liq: 0.01
