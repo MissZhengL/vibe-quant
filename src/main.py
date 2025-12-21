@@ -44,6 +44,7 @@ from src.models import (
     OrderStatus,
     Position,
     PositionUpdate,
+    LeverageUpdate,
     PositionSide,
     SymbolRules,
     ExecutionState,
@@ -104,6 +105,7 @@ class Application:
         self._running = False
         self._shutdown_event = asyncio.Event()
         self._positions: Dict[str, Dict[PositionSide, Position]] = {}  # symbol -> side -> Position
+        self._symbol_leverage: Dict[str, int] = {}  # symbol -> leverage
         self._rules: Dict[str, SymbolRules] = {}  # symbol -> rules
         self._symbol_configs: Dict[str, MergedSymbolConfig] = {}  # symbol -> config
 
@@ -229,15 +231,16 @@ class Application:
         order_type: Optional[str] = None,
         status: Optional[str] = None,
         reason: str = "external_takeover_release",
-    ) -> None:
+    ) -> bool:
         enabled, _verify_ms, _max_hold_ms = self._get_external_takeover_cfg_ms(symbol)
         if not enabled:
-            return
+            return False
         key = (symbol, position_side)
         st = self._external_takeover.get(key)
         if st is None:
             st = ExternalTakeoverState()
             self._external_takeover[key] = st
+        released = False
         if st.active:
             st.active = False
             st.last_verify_present = None
@@ -254,7 +257,9 @@ class Application:
                 client_order_id=client_order_id,
                 order_type=order_type,
             )
+            released = True
         st.last_seen_ms = now_ms
+        return released
 
     def _external_takeover_is_active(self, symbol: str, position_side: PositionSide, *, now_ms: int) -> bool:
         enabled, verify_ms, max_hold_ms = self._get_external_takeover_cfg_ms(symbol)
@@ -423,6 +428,7 @@ class Application:
         if not cfg or not rules:
             return
 
+        needs_resync = False
         try:
             now_ms = current_time_ms()
             external_latch = {
@@ -450,22 +456,24 @@ class Application:
                             st_present.pending_release = False
                     else:
                         st = self._external_takeover.get((symbol, side))
-                        if reason == "external_takeover_verify" and st and st.active and st.pending_release:
-                            self._external_takeover_release(
+                        if st and st.active and st.pending_release:
+                            if self._external_takeover_release(
                                 symbol,
                                 side,
                                 now_ms=now_ms,
                                 source="rest_verify",
                                 reason="external_takeover_release",
-                            )
+                            ):
+                                needs_resync = True
                         elif st and st.active and (now_ms - st.last_seen_ms) >= verify_ms:
-                            self._external_takeover_release(
+                            if self._external_takeover_release(
                                 symbol,
                                 side,
                                 now_ms=now_ms,
                                 source="rest",
                                 reason="external_takeover_release_by_rest",
-                            )
+                            ):
+                                needs_resync = True
 
                     # verify 事件：只在 verify sync 场景打印（避免刷屏）
                     st2 = self._external_takeover.get((symbol, side))
@@ -482,6 +490,10 @@ class Application:
                             )
         except Exception as e:
             log_error(f"保护止损同步异常: {e}", symbol=symbol, reason=reason)
+            return
+
+        if needs_resync:
+            await self._sync_protective_stop(symbol=symbol, reason="external_takeover_release")
 
     async def _sync_protective_stops_all(self, *, reason: str) -> None:
         if not self.config_loader:
@@ -834,6 +846,7 @@ class Application:
             on_order_update=self._on_order_update,
             on_algo_order_update=self._on_algo_order_update,
             on_position_update=self._on_position_update,
+            on_leverage_update=self._on_leverage_update,
             on_reconnect=self._on_ws_reconnect,
             testnet=global_config.testnet,
             proxy=global_config.proxy,
@@ -983,14 +996,20 @@ class Application:
             return
 
         # 1. 我们自己的保护止损单：用前缀匹配，无条件触发 sync（不依赖 cp）
-        if update.client_algo_id and update.client_algo_id.startswith(PROTECTIVE_STOP_PREFIX):
-            if self.protective_stop_manager:
+        if self.protective_stop_manager:
+            is_own_algo = False
+            if update.client_algo_id and update.client_algo_id.startswith(PROTECTIVE_STOP_PREFIX):
+                is_own_algo = True
+            elif update.algo_id and self.protective_stop_manager.is_own_algo_order(update.symbol, update.algo_id):
+                is_own_algo = True
+
+            if is_own_algo:
                 self.protective_stop_manager.on_algo_order_update(update)
-            self._schedule_protective_stop_sync(
-                update.symbol,
-                reason=f"our_algo:{update.status}",
-            )
-            return
+                self._schedule_protective_stop_sync(
+                    update.symbol,
+                    reason=f"our_algo:{update.status}",
+                )
+                return
 
         # 2. 外部 stop/tp 条件单：closePosition(cp)=True 或 reduceOnly(R)=True 均视为外部接管
         if update.order_type and update.order_type.upper() in _STOP_ORDER_TYPES and (
@@ -1108,7 +1127,7 @@ class Application:
             position_amt=update.position_amt,
             entry_price=entry_price,
             unrealized_pnl=unrealized_pnl,
-            leverage=prev.leverage if prev else 1,
+            leverage=prev.leverage if prev else self._symbol_leverage.get(update.symbol, 1),
             mark_price=prev.mark_price if prev else None,
             liquidation_price=prev.liquidation_price if prev else None,
         )
@@ -1121,6 +1140,46 @@ class Application:
                 position_amt=update.position_amt,
             )
             self._schedule_protective_stop_sync(update.symbol, reason=f"position_update:{update.position_side.value}")
+
+    def _on_leverage_update(self, update: LeverageUpdate) -> None:
+        """处理杠杆更新回调（ACCOUNT_CONFIG_UPDATE）。"""
+        if not self._running:
+            return
+
+        # 只跟踪配置中已启用的 symbols
+        if update.symbol not in self.execution_engines:
+            return
+
+        if update.leverage <= 0:
+            return
+
+        previous = self._symbol_leverage.get(update.symbol)
+        if previous == update.leverage:
+            return
+
+        self._symbol_leverage[update.symbol] = update.leverage
+
+        symbol_positions = self._positions.get(update.symbol)
+        if symbol_positions:
+            for side, pos in list(symbol_positions.items()):
+                if pos.leverage != update.leverage:
+                    symbol_positions[side] = Position(
+                        symbol=pos.symbol,
+                        position_side=pos.position_side,
+                        position_amt=pos.position_amt,
+                        entry_price=pos.entry_price,
+                        unrealized_pnl=pos.unrealized_pnl,
+                        leverage=update.leverage,
+                        mark_price=pos.mark_price,
+                        liquidation_price=pos.liquidation_price,
+                    )
+
+        log_event(
+            "leverage_update",
+            symbol=update.symbol,
+            reason="ws_account_config_update",
+            leverage=update.leverage,
+        )
 
     async def _handle_order_update(self, update: OrderUpdate) -> None:
         """异步处理订单更新"""
@@ -1168,14 +1227,33 @@ class Application:
             return
 
         symbols = self.config_loader.get_symbols()
+        leverage_map: Dict[str, int] = {}
+        try:
+            leverage_map = await self.exchange.fetch_leverage_map(symbols)
+        except Exception as e:
+            log_error(f"启动杠杆拉取失败: {e}")
+        if leverage_map:
+            log_event(
+                "leverage_snapshot",
+                reason="position_risk",
+                count=len(leverage_map),
+            )
 
         for symbol in symbols:
+            leverage_override = leverage_map.get(symbol)
+            if leverage_override and leverage_override > 0:
+                self._symbol_leverage[symbol] = leverage_override
             positions = await self.exchange.fetch_positions(symbol)
             # 先清空，再回填：避免 fetch_positions 不返回 0 仓位导致“幽灵仓位”
             self._positions[symbol] = {}
 
             for pos in positions:
+                leverage_override = self._symbol_leverage.get(symbol)
+                if leverage_override and leverage_override > 0 and pos.leverage != leverage_override:
+                    pos.leverage = leverage_override
                 self._positions[symbol][pos.position_side] = pos
+                if pos.leverage > 0:
+                    self._symbol_leverage[symbol] = pos.leverage
                 if abs(pos.position_amt) > Decimal("0"):
                     log_position_update(
                         symbol=symbol,
@@ -1521,7 +1599,12 @@ class Application:
         self._positions[symbol] = {}
 
         for pos in positions:
+            leverage_override = self._symbol_leverage.get(symbol)
+            if leverage_override and leverage_override > 0 and pos.leverage != leverage_override:
+                pos.leverage = leverage_override
             self._positions[symbol][pos.position_side] = pos
+            if pos.leverage > 0:
+                self._symbol_leverage[symbol] = pos.leverage
 
     async def _timeout_check_loop(self) -> None:
         """超时检查循环"""

@@ -98,6 +98,16 @@ class ProtectiveStopManager:
         prefix = self._build_client_order_id_prefix(symbol, position_side)
         return cid.startswith(prefix)
 
+    def is_own_algo_order(self, symbol: str, algo_id: str) -> bool:
+        """检查 algo_id 是否匹配当前已记录的保护止损单。"""
+        if not algo_id:
+            return False
+        for side in (PositionSide.LONG, PositionSide.SHORT):
+            state = self._states.get((symbol, side))
+            if state and state.order_id and str(state.order_id) == str(algo_id):
+                return True
+        return False
+
     def compute_stop_price(
         self,
         *,

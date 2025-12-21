@@ -449,6 +449,25 @@ class TestAsyncMethods:
         assert positions[0].mark_price is None
 
     @pytest.mark.asyncio
+    async def test_fetch_leverage_map(self, mock_exchange):
+        """测试通过 positionRisk 拉取杠杆映射"""
+        mock_exchange.fapiPrivateV2GetPositionRisk = AsyncMock(return_value=[
+            {"symbol": "BTCUSDT", "leverage": "25"},
+            {"symbol": "ETHUSDT", "leverage": 10},
+            {"symbol": "XRPUSDT", "leverage": None},
+        ])
+
+        adapter = ExchangeAdapter("key", "secret")
+        adapter._exchange = mock_exchange
+        adapter._initialized = True
+
+        result = await adapter.fetch_leverage_map(["BTC/USDT:USDT", "ETH/USDT:USDT"])
+        assert result == {
+            "BTC/USDT:USDT": 25,
+            "ETH/USDT:USDT": 10,
+        }
+
+    @pytest.mark.asyncio
     async def test_ensure_initialized_error(self):
         """测试未初始化时报错"""
         adapter = ExchangeAdapter("key", "secret")

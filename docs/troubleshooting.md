@@ -273,6 +273,13 @@ grep "限速" logs/*.log
 
 **系统行为（预期）**：检测到外部 stop/tp（`closePosition=true` 或 `reduceOnly=true`）时，会进入“外部接管”，撤销我方保护止损并暂停维护，直到外部单消失。<br>
 
+**补充说明**：外部接管的释放以 REST 校验为准，可能发生在任意一次保护止损同步的 REST 调用中，不一定是 `external_takeover_verify` 触发的那一次。<br>
+常见触发点：<br>
+- 启动/重连校准后的同步
+- 仓位更新或订单更新触发的同步
+- 外部 stop/tp 的 WS 事件触发的同步
+- 超时检查周期性触发的 `external_takeover_verify` 同步
+
 **排查方法**：
 ```bash
 # 查看外部接管状态变化（set/release/verify）

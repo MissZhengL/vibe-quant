@@ -77,7 +77,7 @@ Binance U 本位永续 Hedge 模式 Reduce-Only 小单平仓执行器。
 | 模块 | 职责 | 输入 | 输出 |
 |------|------|------|------|
 | **ConfigManager** | 加载 YAML 配置，支持 global + symbol 覆盖 | config.yaml | 配置对象 |
-| **WSClient** | 订阅 bookTicker + aggTrade + markPrice@1s + User Data Stream，断线重连，重连后回调触发校准 | 配置 | MarketEvent, OrderUpdate, AlgoOrderUpdate, PositionUpdate |
+| **WSClient** | 订阅 bookTicker + aggTrade + markPrice@1s + User Data Stream（含 ACCOUNT_UPDATE/ACCOUNT_CONFIG_UPDATE），断线重连，重连后回调触发校准 | 配置 | MarketEvent, OrderUpdate, AlgoOrderUpdate, PositionUpdate, LeverageUpdate |
 | **ExchangeAdapter** | ccxt 封装：markets/positions/balance 查询，下单/撤单 | 配置, OrderIntent | OrderResult, Position |
 | **SignalEngine** | 评估平仓触发条件，维护 prev/last trade price；计算 accel/ROI 倍数 | MarketEvent, Position | ExitSignal |
 | **ExecutionEngine** | 状态机管理，下单/撤单/TTL 超时处理 | ExitSignal, 配置 | OrderIntent |
@@ -110,6 +110,7 @@ Binance U 本位永续 Hedge 模式 Reduce-Only 小单平仓执行器。
 | `MarketState` | 聚合后市场状态 | symbol, best_bid/ask, last/previous_trade_price, is_ready |
 | `Position` | 仓位信息 | symbol, position_side, position_amt, entry_price, unrealized_pnl |
 | `PositionUpdate` | 仓位更新事件（WS） | symbol, position_side, position_amt, entry_price, unrealized_pnl |
+| `LeverageUpdate` | 杠杆更新事件（WS） | symbol, leverage, timestamp_ms |
 | `SymbolRules` | 交易规则 | tick_size, step_size, min_qty, min_notional |
 | `ExitSignal` | 平仓信号 | symbol, position_side, reason, timestamp_ms, roi_mult, accel_mult, roi, ret_window |
 | `OrderIntent` | 下单意图 | symbol, side, position_side, qty, price, reduce_only=True, is_risk, client_order_id |

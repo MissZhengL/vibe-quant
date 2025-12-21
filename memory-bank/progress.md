@@ -36,6 +36,18 @@
 - 外部接管采用“锁存 + REST verify”：外部 stop/tp（`cp=True` 或 `reduceOnly=True`）一旦出现即锁存接管；WS 收到某一张终态不直接释放，需 REST verify 确认同侧外部单已清空才恢复自维护（REST 以 raw openOrders 为主；配置：`global.risk.protective_stop.external_takeover.*`）<br>
 - 测试：补充 `tests/test_protective_stop.py`（只收紧语义/启动外部单日志等）与 `tests/test_main_shutdown.py`（debounce 分级逻辑）
 
+## Milestone/附加改进：杠杆实时更新（WS）+ 启动时 REST 校准
+
+**状态**：✅ 已完成<br>
+**日期**：2025-12-20<br>
+**动机**：ccxt `fetch_positions` 在部分账户模式下返回的 `leverage` 为空，导致 ROI 使用 1x 口径；需要在运行中及时跟随客户端杠杆变更，并在启动时补齐杠杆值。<br>
+**产出**：
+- `src/models.py`：新增 `LeverageUpdate`
+- `src/ws/user_data.py`：支持解析 `ACCOUNT_CONFIG_UPDATE` 并回调杠杆更新
+- `src/main.py`：缓存 `symbol`→`leverage`，接收 WS 更新并同步到仓位缓存；启动时拉取 `positionRisk` 进行校准
+- `src/exchange/adapter.py`：新增 `fetch_leverage_map`（调用 `/fapi/v2/positionRisk`）
+- `tests/test_ws_user_data.py`：新增 `ACCOUNT_CONFIG_UPDATE` 解析与回调测试
+
 ### 可选后续工作
 
 | 优先级 | 内容 | 来源 |

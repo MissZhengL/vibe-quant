@@ -41,6 +41,8 @@ EVENT_TYPE_CN = {
     "order_fill": "已成交",
     "order_timeout": "超时未成交",
     "position_update": "仓位更新",
+    "leverage_update": "杠杆更新",
+    "leverage_snapshot": "杠杆快照",
     "mode_change": "模式切换",
     "calibration": "校准",
     "risk_trigger": "风险触发",
@@ -196,6 +198,8 @@ def log_event(
             - order_fill: 成交
             - order_timeout: 超时
             - position_update: 仓位更新
+            - leverage_update: 杠杆更新
+            - leverage_snapshot: 杠杆快照
             - error: 错误
         symbol: 交易对
         side: 方向（LONG/SHORT）

@@ -151,6 +151,16 @@ class PositionUpdate:
     timestamp_ms: int = 0
 
 
+@dataclass
+class LeverageUpdate:
+    """
+    杠杆更新事件（从 User Data Stream 的 ACCOUNT_CONFIG_UPDATE 接收）
+    """
+    symbol: str
+    leverage: int
+    timestamp_ms: int = 0
+
+
 # ============================================================
 # 交易规则
 # ============================================================

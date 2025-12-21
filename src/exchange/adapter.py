@@ -20,7 +20,7 @@
 
 import re
 from decimal import Decimal
-from typing import Dict, List, Optional, Any, cast
+from typing import Dict, List, Optional, Any, Sequence, cast
 
 import ccxt.async_support as ccxt
 
@@ -36,7 +36,8 @@ from src.models import (
     OrderResult,
 )
 from src.utils import round_to_tick, round_to_step, round_up_to_step
-from src.utils.logger import get_logger, log_error, log_order_reject
+from src.utils.helpers import ws_stream_to_symbol
+from src.utils.logger import get_logger, log_error, log_event, log_order_reject
 
 
 class ExchangeAdapter:
@@ -305,6 +306,56 @@ class ExchangeAdapter:
         except Exception as e:
             log_error(f"获取仓位失败: {e}", symbol=symbol)
             raise
+
+    async def fetch_leverage_map(self, symbols: Sequence[str]) -> Dict[str, int]:
+        """
+        通过 positionRisk REST 获取杠杆（用于启动时兜底）。
+
+        Args:
+            symbols: 需要的 symbol 列表（ccxt 格式）
+
+        Returns:
+            symbol -> leverage 映射
+        """
+        self._ensure_initialized()
+        if not symbols:
+            return {}
+
+        try:
+            data = await self._fetch_position_risk()
+        except Exception as e:
+            log_error(f"获取 positionRisk 失败: {e}")
+            return {}
+
+        if not isinstance(data, list):
+            log_error(f"positionRisk 响应格式异常: {type(data)}")
+            return {}
+
+        symbol_set = set(symbols)
+        result: Dict[str, int] = {}
+        for row in data:
+            if not isinstance(row, dict):
+                continue
+            rest_symbol = row.get("symbol")
+            if not rest_symbol:
+                continue
+            ccxt_symbol = ws_stream_to_symbol(str(rest_symbol))
+            if ccxt_symbol not in symbol_set:
+                continue
+            leverage = self._safe_int(row.get("leverage"), default=0)
+            if leverage > 0:
+                result[ccxt_symbol] = leverage
+
+        return result
+
+    async def _fetch_position_risk(self) -> List[Dict[str, Any]]:
+        """调用 Binance positionRisk 接口（优先 v2）。"""
+        exchange = self.exchange
+        for method_name in ("fapiPrivateV2GetPositionRisk", "fapiPrivateGetPositionRisk"):
+            method = getattr(exchange, method_name, None)
+            if method:
+                return await method()
+        raise RuntimeError("ccxt 未提供 fapiPrivate(V2)GetPositionRisk 方法")
 
     async def place_order(self, intent: OrderIntent) -> OrderResult:
         """

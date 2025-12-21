@@ -4,7 +4,7 @@ User Data Stream WebSocket 模块
 职责：
 - 获取并维护 listenKey
 - 连接 User Data Stream
-- 监听 ORDER_TRADE_UPDATE / ALGO_UPDATE 事件
+- 监听 ORDER_TRADE_UPDATE / ALGO_UPDATE / ACCOUNT_UPDATE / ACCOUNT_CONFIG_UPDATE 事件
 - listenKey 每 30 分钟续期
 - 断线自动重连（指数退避）
 
@@ -14,6 +14,7 @@ User Data Stream WebSocket 模块
 输出：
 - OrderUpdate（通过回调）
 - PositionUpdate（通过回调）
+- LeverageUpdate（通过回调）
 """
 
 import asyncio
@@ -32,6 +33,7 @@ from src.models import (
     PositionSide,
     OrderStatus,
     PositionUpdate,
+    LeverageUpdate,
 )
 from src.utils.logger import (
     get_logger,
@@ -72,6 +74,7 @@ class UserDataWSClient:
         on_order_update: Callable[[OrderUpdate], None],
         on_algo_order_update: Optional[Callable[[AlgoOrderUpdate], None]] = None,
         on_position_update: Optional[Callable[[PositionUpdate], None]] = None,
+        on_leverage_update: Optional[Callable[[LeverageUpdate], None]] = None,
         on_reconnect: Optional[Callable[[str], None]] = None,
         testnet: bool = False,
         proxy: Optional[str] = None,
@@ -88,6 +91,7 @@ class UserDataWSClient:
             on_order_update: 收到订单更新时的回调
             on_algo_order_update: 收到 Algo 条件单更新时的回调（ALGO_UPDATE）
             on_position_update: 收到仓位更新时的回调（ACCOUNT_UPDATE）
+            on_leverage_update: 收到杠杆更新时的回调（ACCOUNT_CONFIG_UPDATE）
             on_reconnect: WS 重连成功回调（用于触发上层 REST 校准）
             testnet: 是否使用测试网
             proxy: HTTP 代理地址，如 "http://127.0.0.1:7890"
@@ -100,6 +104,7 @@ class UserDataWSClient:
         self.on_order_update = on_order_update
         self.on_algo_order_update = on_algo_order_update
         self.on_position_update = on_position_update
+        self.on_leverage_update = on_leverage_update
         self.on_reconnect = on_reconnect
         self.testnet = testnet
         self.proxy = proxy
@@ -354,6 +359,7 @@ class UserDataWSClient:
         - listenKeyExpired: listenKey 过期
         - ACCOUNT_UPDATE: 账户更新
         - ORDER_TRADE_UPDATE: 订单/交易更新
+        - ACCOUNT_CONFIG_UPDATE: 配置更新（如杠杆）
         """
         event_type = data.get("e", "")
 
@@ -381,6 +387,14 @@ class UserDataWSClient:
             updates = self._parse_account_update(data)
             for update in updates:
                 self.on_position_update(update)
+            return
+
+        if event_type == "ACCOUNT_CONFIG_UPDATE":
+            if not self.on_leverage_update:
+                return
+            update = self._parse_account_config_update(data)
+            if update:
+                self.on_leverage_update(update)
             return
 
     def _parse_order_update(self, data: Dict[str, Any]) -> Optional[OrderUpdate]:
@@ -597,6 +611,48 @@ class UserDataWSClient:
             )
 
         return updates
+
+    def _parse_account_config_update(self, data: Dict[str, Any]) -> Optional[LeverageUpdate]:
+        """
+        解析 ACCOUNT_CONFIG_UPDATE 事件（杠杆变更）
+
+        格式（简化）：
+        {
+          "e": "ACCOUNT_CONFIG_UPDATE",
+          "E": 1611646737478,
+          "T": 1611646737476,
+          "ac": {
+            "s": "BTCUSDT",
+            "l": "25"
+          }
+        }
+        """
+        config = data.get("ac")
+        if not isinstance(config, dict):
+            return None
+
+        ws_symbol = str(config.get("s", "")).strip()
+        if not ws_symbol:
+            return None
+        symbol = self._ws_to_symbol(ws_symbol)
+
+        raw_leverage = config.get("l")
+        if raw_leverage is None:
+            return None
+
+        try:
+            leverage = int(raw_leverage)
+        except (TypeError, ValueError):
+            try:
+                leverage = int(float(raw_leverage))
+            except (TypeError, ValueError):
+                return None
+
+        if leverage <= 0:
+            return None
+
+        timestamp_ms = int(data.get("T", 0)) or int(data.get("E", 0)) or current_time_ms()
+        return LeverageUpdate(symbol=symbol, leverage=leverage, timestamp_ms=timestamp_ms)
 
     def _ws_to_symbol(self, ws_symbol: str) -> str:
         """

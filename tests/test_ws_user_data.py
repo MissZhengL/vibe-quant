@@ -19,7 +19,7 @@ from src.ws.user_data import (
     WS_TESTNET_URL,
     KEEPALIVE_INTERVAL_MS,
 )
-from src.models import AlgoOrderUpdate, OrderUpdate, OrderSide, PositionSide, OrderStatus, PositionUpdate
+from src.models import AlgoOrderUpdate, OrderUpdate, OrderSide, PositionSide, OrderStatus, PositionUpdate, LeverageUpdate
 from src.utils.logger import setup_logger
 
 
@@ -498,6 +498,30 @@ class TestParseAccountUpdate:
         assert parsed[2].unrealized_pnl == Decimal("0")
 
 
+class TestParseAccountConfigUpdate:
+    """ACCOUNT_CONFIG_UPDATE 解析测试"""
+
+    def test_parse_account_config_update_leverage(self):
+        leverage_updates: List[LeverageUpdate] = []
+        client = UserDataWSClient(
+            api_key="key",
+            api_secret="secret",
+            on_order_update=lambda _: None,
+            on_leverage_update=leverage_updates.append,
+        )
+
+        data = {
+            "e": "ACCOUNT_CONFIG_UPDATE",
+            "E": 1611646737478,
+            "ac": {"s": "BTCUSDT", "l": "25"},
+        }
+
+        parsed = client._parse_account_config_update(data)
+        assert parsed is not None
+        assert parsed.symbol == "BTC/USDT:USDT"
+        assert parsed.leverage == 25
+
+
 class TestParseOrderStatus:
     """订单状态解析测试"""
 
@@ -605,6 +629,32 @@ class TestHandleMessage:
         assert position_updates[0].symbol == "BTC/USDT:USDT"
         assert position_updates[0].position_side == PositionSide.LONG
         assert position_updates[0].position_amt == Decimal("0.1")
+
+    @pytest.mark.asyncio
+    async def test_handle_account_config_update_calls_leverage_callback(self):
+        """测试配置更新消息触发杠杆更新回调"""
+        order_updates: List[OrderUpdate] = []
+        leverage_updates: List[LeverageUpdate] = []
+
+        client = UserDataWSClient(
+            api_key="key",
+            api_secret="secret",
+            on_order_update=order_updates.append,
+            on_leverage_update=leverage_updates.append,
+        )
+
+        message = {
+            "e": "ACCOUNT_CONFIG_UPDATE",
+            "E": 1611646737478,
+            "ac": {"s": "BTCUSDT", "l": "25"},
+        }
+
+        await client._handle_message(message)
+
+        assert len(order_updates) == 0
+        assert len(leverage_updates) == 1
+        assert leverage_updates[0].symbol == "BTC/USDT:USDT"
+        assert leverage_updates[0].leverage == 25
 
     @pytest.mark.asyncio
     async def test_handle_unknown_event_ignored(self):
