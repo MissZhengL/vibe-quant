@@ -32,7 +32,7 @@
 - `src/ws/user_data.py`：支持解析 `ALGO_UPDATE`（Algo Service 条件单更新），用于外部接管的 set/release/verify 打点（不打印 WS 原始 payload）
 - `src/main.py`：收到外部条件单状态变化后调度 protective stop 同步；释放外部接管以 REST verify 为准，避免多外部单并存时误释放
 - `tests/test_ws_user_data.py`：新增/更新解析测试覆盖 `cp/o/ALGO_UPDATE`
-<br>
+
 **补充改进（同批交付）**：<br>
 - 保护性止损只允许“收紧”（LONG stopPrice 只上调；SHORT stopPrice 只下调），避免仓位变安全时把止损越推越远，并减少频繁撤旧建新带来的空窗风险
 - 保护性止损同步采用分级 debounce：`position_update` 1s；`startup/calibration` 0s；其余 0.2s（兼顾 REST 压力与关键场景恢复速度）
