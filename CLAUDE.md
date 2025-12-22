@@ -61,16 +61,37 @@ YAML-based with global defaults and per-symbol overrides. Key sections:
 - **Notifications**: python-telegram-bot
 - **Testing**: pytest + pytest-asyncio
 
-## Markdown 编写规范
+# 核心工作规则
 
-编写 `.md` 文件时，注意 GitHub 渲染规则：
+## 0. 关键约束（违反即任务失败）
+- **必须使用中文回复**：所有解释和交互必须使用中文
+- **文档即代码 (Docs-as-Code)**：功能、架构或代码的更新必须在工作结束前同步更新相关文档
+- **安全红线**：禁止生成恶意代码，必须通过基础安全检查
+- **先讨论后编码**：不明白的地方反问我，先不着急编码，需求澄清完成、关键假设达成一致后，方可进入编码
 
-- **换行**：单个换行符不会渲染为换行。使用 `<br>` 标签换行（行尾两个空格容易被编辑器自动删除），或用空行分隔段落。
+## 1. 动态文档架构体系 (Fractal Documentation System)
+> 核心原则：系统必须具备"自我描述性"，任何代码变更必须反映在以下三个层级中
 
+### 1.1 根目录文档 (Root MD)
+- 任何功能、架构、写法更新，必须在工作结束后更新主目录的相关子文档
 
-# IMPORTANT:
-# emphasize modularity (multiple files) and discourage a monolith (one giant file).
-# Always read memory-bank/architecture.md before writing any code. Include entire database schema.
-# Always read memory-bank/design-document.md before writing any code.
-# After adding a major feature or completing a milestone, update memory-bank/architecture.md with any new architectural insights (including an explanation of each file's role), and record what was done in memory-bank/progress.md for future developers.
-# 先讨论，不明白的地方反问我，先不着急编码
+### 1.2 文件夹级文档 (Folder MD)
+- 每个文件夹下应有 `README.md`
+- 内容：极简架构说明（3行内）+ 文件清单（名字/地位/功能）
+- **自维护声明**：文件开头必须声明："一旦我所属的文件夹有所变化，请更新我。"
+
+### 1.3 文件级注释（File Header）
+每个文件开头应包含三行极简注释：
+- `Input`: 依赖外部的什么（参数/模块/数据）
+- `Output`: 对外提供什么（API/组件/结果）
+- `Pos`: 在系统中的地位是什么
+- **自维护声明**：注释后必须声明："一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。"
+
+## 2. 开发规范
+- 强调模块化（多文件），避免单体巨型文件
+- 编码前必须阅读 memory-bank/architecture.md 和 memory-bank/design-document.md
+- 完成重要功能或里程碑后，更新 memory-bank/architecture.md（含每个文件的作用说明）和 memory-bank/progress.md（记录做了什么以便知晓进度）
+- 个人项目：**No backward compatibility** - 可自由打破旧格式，重构时可移除 legacy 代码
+
+## 3. Markdown 编写规范
+- **换行**：单个换行符不会渲染为换行。使用 `<br>` 标签换行（行尾两个空格容易被编辑器自动删除），Markdown 标准语法如 `- ` 开头则无需额外换行标签
