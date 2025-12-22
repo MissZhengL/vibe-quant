@@ -1,3 +1,8 @@
+<!-- Input: 需求与设计目标 -->
+<!-- Output: 设计方案与约束 -->
+<!-- Pos: memory-bank/design-document -->
+<!-- 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。 -->
+
 # Binance U 本位永续 Hedge 模式：Reduce-Only 小单平仓执行器（ccxt + WebSocket）
 
 > 目标：监听 Binance U 本位永续合约盘口与成交，在**不试图影响价格**的前提下，通过“多次小量 + 执行模式轮转（maker → 激进限价）+ 超时撤单 + 风险兜底”，完成 Hedge 模式下 LONG/SHORT 仓位的 reduce-only 平仓，尽量降低滑点与市场冲击。  

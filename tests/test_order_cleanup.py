@@ -1,3 +1,8 @@
+# Input: 被测模块与 pytest 夹具
+# Output: pytest 断言结果
+# Pos: 测试用例
+# 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
+
 """
 订单清理行为测试：只撤销本次运行挂单（按 {CLIENT_ORDER_PREFIX}-{run_id}- 前缀）。
 """

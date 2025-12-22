@@ -1,3 +1,8 @@
+# Input: systemd 运行参数与环境文件
+# Output: service 单元定义
+# Pos: systemd 服务文件
+# 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
+
 [Unit]
 Description=vibe-quant (Binance Futures reduce-only executor)
 After=network-online.target

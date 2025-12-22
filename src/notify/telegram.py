@@ -1,3 +1,8 @@
+# Input: token, chat_id, events
+# Output: Telegram message delivery
+# Pos: Telegram notifier
+# 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
+
 """
 Telegram 通知模块
 

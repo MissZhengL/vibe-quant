@@ -1,3 +1,7 @@
+<!-- Input: 部署配置、运行环境、日志目录约定 -->
+<!-- Output: 部署与运维步骤、日志/监控/备份指引 -->
+<!-- Pos: 文档/部署指南 -->
+<!-- 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。 -->
 # 部署指南
 
 > vibe-quant 生产环境部署完整指南
@@ -129,7 +133,7 @@ python -m src.main config/config-local.yaml
 ### 7. 验证运行
 
 检查日志输出：
-- 查看 `logs/` 目录下的日志文件
+- 查看 `logs/` 目录下的 `vibe-quant_YYYY-MM-DD.log` 与 `error_YYYY-MM-DD.log`（旧日志会压缩为 `.gz`）
 - 确认 WebSocket 连接成功
 - 查看仓位和市场数据是否正常获取
 
@@ -154,7 +158,8 @@ python -m src.main config/config-local.yaml
 └── vibe-quant.env        # 环境变量（包含 API 密钥）
 
 /var/log/vibe-quant/      # 日志目录
-└── YYYY-MM-DD.log        # 按天滚动的日志文件
+├── vibe-quant_YYYY-MM-DD.log  # 按天滚动的业务日志（旧日志压缩为 .gz）
+└── error_YYYY-MM-DD.log       # 按天滚动的错误日志（旧日志压缩为 .gz）
 
 /etc/systemd/system/      # systemd 服务
 └── vibe-quant.service    # 服务单元文件
@@ -342,7 +347,8 @@ journalctl -u vibe-quant -f
 
 **查看文件日志**：
 ```bash
-tail -f /var/log/vibe-quant/$(date +%Y-%m-%d).log
+tail -f /var/log/vibe-quant/vibe-quant_$(date +%Y-%m-%d).log
+tail -f /var/log/vibe-quant/error_$(date +%Y-%m-%d).log
 ```
 
 ---
@@ -493,28 +499,29 @@ docker-compose logs -f vibe-quant
 
 #### 日志轮转
 
-系统默认按天生成日志文件（`YYYY-MM-DD.log`），建议定期清理旧日志：
+系统默认由 loguru 按天滚动日志，文件名为 `vibe-quant_YYYY-MM-DD.log` 与 `error_YYYY-MM-DD.log`，旧日志会压缩为 `.gz`，默认保留 30 天。通常无需额外 logrotate。若通过 `VQ_LOG_DIR` 修改日志目录，请将下述路径替换为实际目录。
 
 **方法1：手动清理**
 ```bash
-# 删除 30 天前的日志
-find /var/log/vibe-quant -name "*.log" -mtime +30 -delete
+# 删除 30 天前的日志（包含 .log/.log.gz）
+find /var/log/vibe-quant -type f \( -name "vibe-quant_*.log*" -o -name "error_*.log*" \) -mtime +30 -delete
 ```
 
-**方法2：使用 logrotate**
+**方法2（可选）：使用 logrotate（如需统一系统日志策略）**
 
 创建 `/etc/logrotate.d/vibe-quant`：
 ```
-/var/log/vibe-quant/*.log {
+/var/log/vibe-quant/vibe-quant_*.log /var/log/vibe-quant/error_*.log {
     daily
     rotate 30
-    compress
-    delaycompress
+    copytruncate
+    nocompress
     missingok
     notifempty
-    create 0644 root root
 }
 ```
+
+注意：loguru 已负责轮转/压缩，若启用 logrotate，建议先在 `src/utils/logger.py` 调整 loguru 的 rotation/retention/compression 以避免双重轮转。
 
 测试配置：
 ```bash
@@ -525,16 +532,17 @@ sudo logrotate -d /etc/logrotate.d/vibe-quant
 
 **监控错误日志**：
 ```bash
-# 实时监控错误
-tail -f /var/log/vibe-quant/$(date +%Y-%m-%d).log | grep ERROR
+# 实时监控错误日志
+tail -f /var/log/vibe-quant/error_$(date +%Y-%m-%d).log
 
 # 统计今日错误数
-grep ERROR /var/log/vibe-quant/$(date +%Y-%m-%d).log | wc -l
+wc -l /var/log/vibe-quant/error_$(date +%Y-%m-%d).log
 ```
 
 **监控重连事件**：
 ```bash
-grep "WS重连" /var/log/vibe-quant/*.log | wc -l
+grep "WS重连" /var/log/vibe-quant/vibe-quant_$(date +%Y-%m-%d).log | wc -l
+zgrep -h "WS重连" /var/log/vibe-quant/vibe-quant_*.log* | wc -l
 ```
 
 ---
@@ -578,7 +586,8 @@ if ! systemctl is-active --quiet vibe-quant; then
 fi
 
 # 检查日志中是否有最近的心跳（例如最近5分钟内有日志更新）
-LOG_FILE="/var/log/vibe-quant/$(date +%Y-%m-%d).log"
+# 如日志目录非 /var/log/vibe-quant，请同步调整 LOG_FILE
+LOG_FILE="/var/log/vibe-quant/vibe-quant_$(date +%Y-%m-%d).log"
 if [ ! -f "$LOG_FILE" ]; then
     echo "WARNING: Log file not found"
     exit 1
@@ -720,7 +729,7 @@ sudo crontab -e
 **日志备份**：
 ```bash
 # 每周归档日志
-0 3 * * 0 tar -czf /backup/logs-$(date +\%Y\%W).tar.gz /var/log/vibe-quant/*.log && find /backup -name "logs-*.tar.gz" -mtime +60 -delete
+0 3 * * 0 tar -czf /backup/logs-$(date +\%Y\%W).tar.gz /var/log/vibe-quant/vibe-quant_*.log* /var/log/vibe-quant/error_*.log* && find /backup -name "logs-*.tar.gz" -mtime +60 -delete
 ```
 
 ---
@@ -805,4 +814,4 @@ sudo systemctl enable vibe-quant-btc
 
 ---
 
-*最后更新: 2025-12-21*
+*最后更新: 2025-12-22*

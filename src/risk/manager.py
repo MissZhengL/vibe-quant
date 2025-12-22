@@ -1,3 +1,8 @@
+# Input: Position, MarketEvent, config
+# Output: RiskFlag and risk triggers
+# Pos: risk manager
+# 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
+
 """
 风险管理模块
 

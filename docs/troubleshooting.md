@@ -1,3 +1,7 @@
+<!-- Input: 常见故障场景、日志/配置/运行环境 -->
+<!-- Output: 排查步骤与解决方案 -->
+<!-- Pos: 文档/故障排查指南 -->
+<!-- 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。 -->
 # 故障排查指南
 
 > vibe-quant 常见问题与解决方案
@@ -188,7 +192,7 @@ global:
 4. **查看重连日志**：
    ```bash
    # 查找重连事件
-   grep "WS重连" logs/*.log
+   grep "WS重连" logs/vibe-quant_$(date +%Y-%m-%d).log
    ```
 
 ---
@@ -258,7 +262,7 @@ global:
 **监控限速**：
 ```bash
 # 查看限速事件
-grep "限速" logs/*.log
+grep "限速" logs/vibe-quant_$(date +%Y-%m-%d).log
 ```
 
 ---
@@ -283,10 +287,10 @@ grep "限速" logs/*.log
 **排查方法**：
 ```bash
 # 查看外部接管状态变化（set/release/verify）
-grep "\\[PROTECTIVE_STOP\\]" logs/*.log | grep "external_takeover" | tail -50
+grep "\\[PROTECTIVE_STOP\\]" logs/vibe-quant_$(date +%Y-%m-%d).log | grep "external_takeover" | tail -50
 
 # 如果同侧出现多张外部 stop/tp，会打印摘要告警
-grep "\\[PROTECTIVE_STOP\\]" logs/*.log | grep "external_stop_multiple" | tail -20
+grep "\\[PROTECTIVE_STOP\\]" logs/vibe-quant_$(date +%Y-%m-%d).log | grep "external_stop_multiple" | tail -20
 ```
 
 **解决方案**：
@@ -356,7 +360,7 @@ symbols:
 
 2. 查看日志中的止损订单参数：
    ```bash
-   grep "保护止损" logs/*.log
+   grep "保护止损" logs/vibe-quant_$(date +%Y-%m-%d).log
    ```
 
 3. 确认仓位数据准确（标记价格、强平价格）
@@ -383,7 +387,7 @@ symbols:
 
 3. 查看日志中的仓位信息：
    ```bash
-   grep "仓位更新" logs/*.log | tail -10
+   grep "仓位更新" logs/vibe-quant_$(date +%Y-%m-%d).log | tail -10
    ```
 
 ---
@@ -424,10 +428,10 @@ symbols:
 #### 3. 监控重连状态
 ```bash
 # 查看最近重连记录
-grep "WS重连" logs/*.log | tail -20
+grep "WS重连" logs/vibe-quant_$(date +%Y-%m-%d).log | tail -20
 
 # 统计今天重连次数
-grep "WS重连" logs/$(date +%Y-%m-%d).log | wc -l
+grep "WS重连" logs/vibe-quant_$(date +%Y-%m-%d).log | wc -l
 ```
 
 **预期重连次数**：1-3次/天属于正常
@@ -445,7 +449,7 @@ grep "WS重连" logs/$(date +%Y-%m-%d).log | wc -l
 **解决方案**：
 1. **检查 WebSocket 连接状态**：
    ```bash
-   grep "WS连接\|WS断开" logs/*.log | tail -10
+   grep "WS连接\|WS断开" logs/vibe-quant_$(date +%Y-%m-%d).log | tail -10
    ```
 
 2. **如果 WebSocket 已连接但仍显示陈旧**：
@@ -543,7 +547,7 @@ maker_safety_ticks: 1
 
 3. **查看日志确认加载**：
    ```bash
-   grep "配置加载" logs/*.log | head -5
+   grep "配置加载" logs/vibe-quant_$(date +%Y-%m-%d).log | head -5
    ```
 
 ---
@@ -554,10 +558,11 @@ maker_safety_ticks: 1
 
 **本地开发**：
 - 默认位置：`logs/`（相对于工作目录）
-- 文件命名：`YYYY-MM-DD.log`（每天一个文件）
+- 文件命名：`vibe-quant_YYYY-MM-DD.log` 与 `error_YYYY-MM-DD.log`（每天一个文件，旧日志压缩为 `.gz`）
+- 可通过环境变量 `VQ_LOG_DIR` 修改日志目录
 
 **systemd 部署**：
-- 文件日志：`/var/log/vibe-quant/YYYY-MM-DD.log`
+- 文件日志：`/var/log/vibe-quant/vibe-quant_YYYY-MM-DD.log` 与 `error_YYYY-MM-DD.log`
 - systemd 日志：`journalctl -u vibe-quant`
 
 ---
@@ -567,7 +572,8 @@ maker_safety_ticks: 1
 #### 实时查看日志
 ```bash
 # 文件日志
-tail -f logs/$(date +%Y-%m-%d).log
+tail -f logs/vibe-quant_$(date +%Y-%m-%d).log
+tail -f logs/error_$(date +%Y-%m-%d).log
 
 # systemd 日志
 journalctl -u vibe-quant -f
@@ -576,16 +582,17 @@ journalctl -u vibe-quant -f
 #### 查找特定事件
 ```bash
 # 查找错误
-grep "错误" logs/*.log
+grep "错误" logs/vibe-quant_$(date +%Y-%m-%d).log
+tail -f logs/error_$(date +%Y-%m-%d).log
 
 # 查找订单成交
-grep "已成交" logs/*.log
+grep "已成交" logs/vibe-quant_$(date +%Y-%m-%d).log
 
 # 查找风险触发
-grep "风险触发" logs/*.log
+grep "风险触发" logs/vibe-quant_$(date +%Y-%m-%d).log
 
 # 查找 WebSocket 重连
-grep "WS重连" logs/*.log
+grep "WS重连" logs/vibe-quant_$(date +%Y-%m-%d).log
 ```
 
 #### 按时间筛选（systemd）
@@ -602,7 +609,7 @@ journalctl -u vibe-quant --since "2025-12-19 10:00" --until "2025-12-19 12:00"
 
 #### 查看启动和关闭记录
 ```bash
-grep "启动\|关闭" logs/*.log
+grep "启动\|关闭" logs/vibe-quant_$(date +%Y-%m-%d).log
 ```
 
 ---
@@ -619,8 +626,15 @@ grep "启动\|关闭" logs/*.log
 
 **查看特定级别**：
 ```bash
-grep "ERROR" logs/*.log
-grep "WARNING" logs/*.log
+grep "ERROR" logs/vibe-quant_$(date +%Y-%m-%d).log
+grep "WARNING" logs/vibe-quant_$(date +%Y-%m-%d).log
+tail -f logs/error_$(date +%Y-%m-%d).log
+```
+
+**压缩日志查询**：
+```bash
+zgrep -h "WS重连" logs/vibe-quant_*.log*
+zgrep -h "ERROR" logs/vibe-quant_*.log*
 ```
 
 ---
@@ -722,7 +736,8 @@ watch -n 5 'ps aux | grep vibe-quant'
 1. **查看完整日志**：
    ```bash
    # 收集最近的日志
-   tail -1000 logs/$(date +%Y-%m-%d).log > debug.log
+   tail -1000 logs/vibe-quant_$(date +%Y-%m-%d).log > debug.log
+   tail -1000 logs/error_$(date +%Y-%m-%d).log >> debug.log
    ```
 
 2. **提供以下信息**：
@@ -746,4 +761,4 @@ watch -n 5 'ps aux | grep vibe-quant'
 
 ---
 
-*最后更新: 2025-12-21*
+*最后更新: 2025-12-22*

@@ -1,3 +1,8 @@
+# Input: 依赖版本清单
+# Output: pip requirements
+# Pos: 依赖清单
+# 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
+
 # vibe-quant 依赖
 
 # 交易所

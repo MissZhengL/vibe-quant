@@ -1,3 +1,7 @@
+<!-- Input: 配置项与环境变量 -->
+<!-- Output: 配置说明与调优建议 -->
+<!-- Pos: 文档/配置参数手册 -->
+<!-- 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。 -->
 # 配置参数手册
 
 > vibe-quant 详细配置参数说明与调优建议
@@ -56,6 +60,7 @@ vibe-quant 使用 YAML 配置文件（`config/config.yaml`）管理所有运行�
 - **默认值**: `logs/`（相对于工作目录）
 - **说明**: 日志文件存储目录
 - **systemd 部署**: 通常设置为 `/var/log/vibe-quant`
+- **日志文件**: `vibe-quant_YYYY-MM-DD.log` 与 `error_YYYY-MM-DD.log`（旧日志压缩为 `.gz`）
 
 ### 环境变量配置示例
 

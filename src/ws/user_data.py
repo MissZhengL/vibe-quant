@@ -1,3 +1,8 @@
+# Input: API keys, listenKey, callbacks
+# Output: order and position updates
+# Pos: user data WS client
+# 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
+
 """
 User Data Stream WebSocket 模块
 

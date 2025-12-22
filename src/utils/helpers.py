@@ -1,3 +1,8 @@
+# Input: numeric values, time, symbols
+# Output: rounded values and helpers
+# Pos: utility functions
+# 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
+
 """
 工具函数模块
 

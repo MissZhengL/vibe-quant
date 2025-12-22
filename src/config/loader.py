@@ -1,3 +1,8 @@
+# Input: YAML config path and env vars
+# Output: AppConfig and merged symbol config
+# Pos: config loader/merger
+# 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
+
 """
 配置加载模块
 

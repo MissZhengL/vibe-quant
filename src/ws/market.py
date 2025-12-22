@@ -1,3 +1,8 @@
+# Input: WS URLs, symbols, callbacks
+# Output: MarketEvent stream
+# Pos: market WS client
+# 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
+
 """
 市场数据 WebSocket 模块
 

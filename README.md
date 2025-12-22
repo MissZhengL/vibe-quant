@@ -1,3 +1,8 @@
+<!-- Input: 项目概述与使用方式 -->
+<!-- Output: 使用说明与快速上手 -->
+<!-- Pos: 项目根 README -->
+<!-- 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。 -->
+
 # vibe-quant
 
 Binance U 本位永续合约 **Hedge 模式 Reduce-Only 平仓执行器**。

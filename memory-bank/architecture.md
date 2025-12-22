@@ -1,3 +1,7 @@
+<!-- Input: 系统模块与运行方式 -->
+<!-- Output: 架构与文件结构说明 -->
+<!-- Pos: memory-bank/architecture -->
+<!-- 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。 -->
 # 系统架构
 
 > 本文档描述系统的整体架构和每个文件/模块的作用。
@@ -30,7 +34,7 @@ Binance U 本位永续 Hedge 模式 Reduce-Only 小单平仓执行器。
 ## 数据存储（当前无数据库）
 
 - **配置**：`config/config.yaml`（YAML）
-- **日志**：`logs/`（按天滚动）
+- **日志**：`logs/`（`vibe-quant_YYYY-MM-DD.log`/`error_YYYY-MM-DD.log`，旧日志 `.gz`）
 - **持久化数据库**：无（当前所有状态仅在内存中维护）
 
 ---
@@ -180,17 +184,22 @@ IDLE ──(信号触发)──▶ PLACING ──(下单成功)──▶ WAITING
 
 ## 文件结构（已实现）
 
+说明：各目录包含 README.md 作为目录级说明。
+
 ```
 vibe-quant/
 ├── .gitignore                # Git 忽略文件
 ├── CLAUDE.md                 # Claude Code 指引
 ├── requirements.txt          # Python 依赖
 ├── config/
+│   ├── README.md             # config 目录说明
 │   └── config.yaml           # 配置文件（敏感信息走环境变量）
 ├── deploy/
+│   ├── README.md             # deploy 目录说明
 │   └── systemd/              # systemd 部署产物（service/env 示例/说明）
-├── logs/                     # 日志目录（.gitignore）
-├── memory-bank/              # 设计文档与进度
+├── logs/                     # 日志目录（含 README.md）
+├── memory-bank/              # 设计文档与进度（含 README.md）
+│   ├── README.md             # memory-bank 目录说明
 │   ├── architecture.md       # 本文件
 │   ├── design-document.md    # 设计文档
 │   ├── implementation-plan.md # 实施计划
@@ -199,39 +208,49 @@ vibe-quant/
 │   └── tech-stack.md         # 技术栈
 ├── README.md                 # 项目说明（含 ROI/accel 口径）
 ├── src/
+│   ├── README.md             # src 目录说明
 │   ├── __init__.py           # 根模块，导出所有数据结构
 │   ├── models.py             # 核心数据结构（枚举 + dataclass）
 │   ├── main.py               # 入口，事件循环，优雅退出
 │   ├── config/
+│   │   ├── README.md         # src/config 目录说明
 │   │   ├── __init__.py
 │   │   ├── loader.py         # YAML 加载，global + symbol 覆盖
 │   │   └── models.py         # pydantic 配置模型
 │   ├── exchange/
+│   │   ├── README.md         # src/exchange 目录说明
 │   │   ├── __init__.py
 │   │   └── adapter.py        # ccxt 封装（markets/positions/下单/撤单）
 │   ├── ws/
+│   │   ├── README.md         # src/ws 目录说明
 │   │   ├── __init__.py
 │   │   ├── market.py         # 市场数据 WS（bookTicker + aggTrade + markPrice@1s）
 │   │   └── user_data.py      # User Data Stream（ORDER_TRADE_UPDATE + ALGO_UPDATE + ACCOUNT_UPDATE）
 │   ├── signal/
+│   │   ├── README.md         # src/signal 目录说明
 │   │   ├── __init__.py
 │   │   └── engine.py         # 信号判断（LONG/SHORT 触发条件）
 │   ├── execution/
+│   │   ├── README.md         # src/execution 目录说明
 │   │   ├── __init__.py
 │   │   └── engine.py         # 状态机（IDLE→PLACE→WAIT→CANCEL→COOLDOWN）
 │   ├── risk/
+│   │   ├── README.md         # src/risk 目录说明
 │   │   ├── __init__.py
 │   │   ├── manager.py        # 风控（强平距离、全局限速）
 │   │   ├── protective_stop.py # 仓位保护性止损（STOP_MARKET 条件单）
 │   │   └── rate_limiter.py   # 滑动窗口限速器
 │   ├── notify/
+│   │   ├── README.md         # src/notify 目录说明
 │   │   ├── __init__.py
 │   │   └── telegram.py       # Telegram 通知（成交/重连/风险/开仓告警）
 │   └── utils/
+│       ├── README.md         # src/utils 目录说明
 │       ├── __init__.py
 │       ├── logger.py         # loguru 日志配置
 │       └── helpers.py        # 规整函数（round_to_tick/round_up_to_tick/step）
 └── tests/
+    ├── README.md             # tests 目录说明
     ├── __init__.py
     ├── test_config.py        # 配置模块测试（12 用例）
     ├── test_exchange.py      # 交易所适配器测试（20 用例）
@@ -250,21 +269,21 @@ vibe-quant/
 
 | 文件 | 行数 | 说明 |
 |------|------|------|
-| `src/models.py` | 300 | 核心数据结构（枚举 + dataclass），定义所有模块间传递的数据结构 |
-| `src/main.py` | 1407 | Application 类，模块初始化 + 事件循环 + 优雅退出 |
-| `src/config/loader.py` | 253 | ConfigLoader 类，YAML 加载 + 环境变量 + global/symbol 合并 |
-| `src/config/models.py` | 272 | pydantic 配置模型，支持类型验证和默认值 |
-| `src/utils/logger.py` | 434 | loguru 日志配置，按天滚动 + 结构化事件日志 |
-| `src/utils/helpers.py` | 131 | round_to_tick/round_up_to_tick/round_to_step/round_up_to_step/current_time_ms/symbol 转换 |
-| `src/exchange/adapter.py` | 650 | ExchangeAdapter 类，ccxt 封装（markets/positions/下单/撤单/规整函数） |
-| `src/ws/market.py` | 472 | MarketWSClient 类，bookTicker/aggTrade/markPrice@1s 解析，指数退避重连，陈旧检测，重连回调 |
-| `src/ws/user_data.py` | 608 | UserDataWSClient 类，listenKey 管理 + ORDER_TRADE_UPDATE/ALGO_UPDATE/ACCOUNT_UPDATE 解析，指数退避重连，重连回调 |
-| `src/signal/engine.py` | 474 | SignalEngine 类，MarketState 聚合 + LONG/SHORT 信号判断 + 节流 + accel/ROI 倍数 |
-| `src/execution/engine.py` | 874 | ExecutionEngine 类，状态机 + Maker/Aggr 定价 + 超时/冷却管理 + panic_close 支持 |
-| `src/risk/manager.py` | 137 | RiskManager 类，dist_to_liq 风控兜底 + orders/cancels 全局限速 |
-| `src/risk/protective_stop.py` | 343 | ProtectiveStopManager 类，维护交易所端 STOP_MARKET closePosition 保护止损单 |
-| `src/risk/rate_limiter.py` | 46 | SlidingWindowRateLimiter，固定窗口滑动计数限速 |
-| `src/notify/telegram.py` | 236 | Telegram 通知（成交/重连/风险触发/开仓告警；token/chat_id 走 env） |
+| `src/models.py` | 340 | 核心数据结构（枚举 + dataclass），定义所有模块间传递的数据结构 |
+| `src/main.py` | 1853 | Application 类，模块初始化 + 事件循环 + 优雅退出 |
+| `src/config/loader.py` | 270 | ConfigLoader 类，YAML 加载 + 环境变量 + global/symbol 合并 |
+| `src/config/models.py` | 312 | pydantic 配置模型，支持类型验证和默认值 |
+| `src/utils/logger.py` | 483 | loguru 日志配置，按天滚动 + 结构化事件日志 |
+| `src/utils/helpers.py` | 159 | round_to_tick/round_up_to_tick/round_to_step/round_up_to_step/current_time_ms/symbol 转换 |
+| `src/exchange/adapter.py` | 820 | ExchangeAdapter 类，ccxt 封装（markets/positions/下单/撤单/规整函数） |
+| `src/ws/market.py` | 477 | MarketWSClient 类，bookTicker/aggTrade/markPrice@1s 解析，指数退避重连，陈旧检测，重连回调 |
+| `src/ws/user_data.py` | 744 | UserDataWSClient 类，listenKey 管理 + ORDER_TRADE_UPDATE/ALGO_UPDATE/ACCOUNT_UPDATE 解析，指数退避重连，重连回调 |
+| `src/signal/engine.py` | 471 | SignalEngine 类，MarketState 聚合 + LONG/SHORT 信号判断 + 节流 + accel/ROI 倍数 |
+| `src/execution/engine.py` | 882 | ExecutionEngine 类，状态机 + Maker/Aggr 定价 + 超时/冷却管理 + panic_close 支持 |
+| `src/risk/manager.py` | 142 | RiskManager 类，dist_to_liq 风控兜底 + orders/cancels 全局限速 |
+| `src/risk/protective_stop.py` | 694 | ProtectiveStopManager 类，维护交易所端 STOP_MARKET closePosition 保护止损单 |
+| `src/risk/rate_limiter.py` | 51 | SlidingWindowRateLimiter，固定窗口滑动计数限速 |
+| `src/notify/telegram.py` | 241 | Telegram 通知（成交/重连/风险触发/开仓告警；token/chat_id 走 env） |
 
 ---
 

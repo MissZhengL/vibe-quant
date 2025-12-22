@@ -1,3 +1,7 @@
+<!-- Input: 开发进度与里程碑记录 -->
+<!-- Output: 可追溯的变更与状态 -->
+<!-- Pos: memory-bank/progress -->
+<!-- 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。 -->
 # 开发进度日志
 
 > 本文档记录每个实施步骤的完成情况，供未来开发者参考。
@@ -997,6 +1001,22 @@ pytest: 26 passed
 ```
 pyright: 0 errors
 pytest: 全量通过
+```
+
+---
+
+## 附加改进：文档自描述与文件头规范补全
+
+### 完成内容
+- 为 `src/*.py` 增加 Input/Output/Pos 文件头注释与自维护声明。<br>
+- 为 `tests/*.py`、`config/config.example.yaml`、`.env.example`、`requirements.txt`、systemd 配置文件补齐文件头注释。<br>
+- 为 `README.md` 与 memory-bank 其余文档补齐文件头注释。<br>
+- 补齐目录级 `README.md`（含 docs/deploy/src/tests 等），形成目录级自描述。<br>
+- 同步更新部署/配置/故障排查文档中的日志命名与路径。<br>
+
+### 测试结果
+```
+n/a (docs only)
 ```
 
 ---

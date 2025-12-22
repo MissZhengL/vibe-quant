@@ -1,0 +1,21 @@
+<!-- Input: memory-bank 文档与进度记录 -->
+<!-- Output: 设计/架构/进度文档索引 -->
+<!-- Pos: memory-bank 文件夹级说明 -->
+<!-- 一旦我所属的文件夹有所变化，请更新我。 -->
+<!-- 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。 -->
+# memory-bank 目录说明
+
+设计/架构/进度的单一事实来源。<br>
+记录关键决策与实施进度。<br>
+重要变更需同步更新本目录。
+
+## 文件清单
+
+- `architecture.md`：系统架构与模块说明
+- `design-document.md`：设计文档与执行原则
+- `implementation-plan.md`：实施计划与阶段任务
+- `mvp-scope.md`：MVP 范围定义
+- `progress.md`：进度记录与里程碑
+- `tech-stack.md`：技术栈说明
+
+*最后更新: 2025-12-22*
