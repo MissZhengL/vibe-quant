@@ -318,6 +318,14 @@ MAKER_ONLY → 超时2次 → AGGRESSIVE_LIMIT → 超时2次 → MAKER_ONLY
   - LONG 仓位: 取正方向回报率（价格上涨）
   - SHORT 仓位: 取负方向回报率（价格下跌），匹配时取绝对值
 
+#### mult_percent（仅 symbols.accel 可用）
+- **类型**: `decimal`
+- **默认值**: `null`
+- **说明**: 当 `symbols.<symbol>.accel.tiers` 未覆盖时，按 `mult_percent` 缩放 `global.accel.tiers` 的 `mult`（向上取整，最小 1）
+- **注意**:
+  - 若 `symbols.<symbol>.accel.tiers` 显式提供（含空列表），`mult_percent` 会被忽略
+  - 允许大于 1，建议不超过 `3`
+
 **示例档位**（当前配置）:
 | 回报率阈值 | 倍数 | 说明 |
 |-----------|------|------|
@@ -573,6 +581,7 @@ symbols:
     accel:
       window_ms: 1500
       tiers: [...]                # 完全覆盖档位
+      mult_percent: 0.5           # 缩放 global.accel.tiers 的 mult（tiers 未覆盖时生效）
     roi:
       tiers: [...]
     risk:
@@ -703,4 +712,3 @@ global:
 
 ---
 
-*最后更新: 2025-12-22*

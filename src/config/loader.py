@@ -21,6 +21,7 @@
 """
 
 import os
+from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +29,7 @@ import yaml
 
 from .models import (
     AppConfig,
+    AccelTier,
     MergedSymbolConfig,
     GlobalConfig,
     SymbolConfig,
@@ -174,7 +176,12 @@ class ConfigLoader:
 
         # 合并加速配置
         accel_window_ms = _get_override(s_accel, "window_ms", g_accel.window_ms)
-        accel_tiers = _get_override(s_accel, "tiers", g_accel.tiers)
+        if s_accel and s_accel.tiers is not None:
+            accel_tiers = s_accel.tiers
+        else:
+            accel_tiers = g_accel.tiers
+            if s_accel and s_accel.mult_percent is not None:
+                accel_tiers = _scale_accel_tiers(accel_tiers, s_accel.mult_percent)
 
         # 合并 ROI 配置
         roi_tiers = _get_override(s_roi, "tiers", g_roi.tiers)
@@ -268,3 +275,13 @@ def _get_override(symbol_cfg, field: str, default):
         return default
     value = getattr(symbol_cfg, field, None)
     return value if value is not None else default
+
+
+def _scale_accel_tiers(tiers: list[AccelTier], mult_percent: Decimal) -> list[AccelTier]:
+    """按比例缩放加速档位的 mult，向上取整且最小为 1。"""
+    scaled: list[AccelTier] = []
+    for tier in tiers:
+        raw_mult = Decimal(tier.mult) * Decimal(mult_percent)
+        scaled_mult = int(raw_mult.to_integral_value(rounding=ROUND_CEILING))
+        scaled.append(AccelTier(ret=tier.ret, mult=max(scaled_mult, 1)))
+    return scaled

@@ -11,7 +11,7 @@ pytest 测试集。<br>
 
 ## 文件清单
 
-- `test_config.py`：配置加载与合并测试
+- `test_config.py`：配置加载与合并测试（含 accel mult_percent）
 - `test_exchange.py`：交易所适配器测试
 - `test_execution.py`：执行引擎测试
 - `test_logger.py`：日志系统测试
@@ -25,4 +25,3 @@ pytest 测试集。<br>
 - `test_ws_user_data.py`：用户数据 WS 测试
 - `__init__.py`：测试包初始化
 
-*最后更新: 2025-12-23*

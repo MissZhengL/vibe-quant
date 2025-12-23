@@ -190,6 +190,11 @@ class SymbolAccelConfig(BaseModel):
     """Symbol 级别加速配置覆盖"""
     window_ms: Optional[int] = None
     tiers: Optional[List[AccelTier]] = None
+    mult_percent: Optional[Decimal] = Field(
+        default=None,
+        gt=Decimal("0"),
+        description="按比例缩放 global.accel.tiers 的 mult（仅在 tiers 未覆盖时生效）",
+    )
 
 
 class SymbolRoiConfig(BaseModel):

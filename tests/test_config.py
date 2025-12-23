@@ -198,6 +198,46 @@ symbols:
         assert config.max_orders_per_sec == 10
         assert config.max_cancels_per_sec == 15
 
+    def test_symbol_accel_mult_percent_scales_global_tiers(self, env_vars):
+        """测试 symbol.accel.mult_percent 缩放 global tiers（向上取整 + 最小 1）"""
+        content = """
+global:
+  accel:
+    window_ms: 2000
+    tiers:
+      - { ret: 0.001, mult: 1 }
+      - { ret: 0.003, mult: 3 }
+symbols:
+  BTC/USDT:USDT:
+    accel:
+      mult_percent: 0.5
+  ETH/USDT:USDT:
+    accel:
+      tiers:
+        - { ret: 0.002, mult: 9 }
+      mult_percent: 0.5
+"""
+        with NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(content)
+            temp_path = f.name
+
+        try:
+            loader = ConfigLoader(Path(temp_path))
+            loader.load()
+
+            btc_config = loader.get_symbol_config("BTC/USDT:USDT")
+            assert [(t.ret, t.mult) for t in btc_config.accel_tiers] == [
+                (Decimal("0.001"), 1),
+                (Decimal("0.003"), 2),
+            ]
+
+            eth_config = loader.get_symbol_config("ETH/USDT:USDT")
+            assert [(t.ret, t.mult) for t in eth_config.accel_tiers] == [
+                (Decimal("0.002"), 9),
+            ]
+        finally:
+            os.unlink(temp_path)
+
     def test_file_not_found(self, env_vars):
         """测试配置文件不存在"""
         loader = ConfigLoader(Path("/nonexistent/config.yaml"))

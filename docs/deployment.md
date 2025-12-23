@@ -814,4 +814,3 @@ sudo systemctl enable vibe-quant-btc
 
 ---
 
-*最后更新: 2025-12-22*

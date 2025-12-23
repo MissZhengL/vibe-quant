@@ -761,4 +761,3 @@ watch -n 5 'ps aux | grep vibe-quant'
 
 ---
 
-*最后更新: 2025-12-22*

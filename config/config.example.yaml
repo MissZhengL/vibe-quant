@@ -112,3 +112,8 @@ symbols:
   # ETH/USDT:USDT:
   #   execution:
   #     max_order_notional: 500
+  #
+  # 示例：统一缩放 accel 档位倍数（不需要逐档配置）
+  # SOL/USDT:USDT:
+  #   accel:
+  #     mult_percent: 0.5
