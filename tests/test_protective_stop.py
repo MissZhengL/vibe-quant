@@ -1,5 +1,5 @@
 # Input: 被测模块与 pytest 夹具
-# Output: pytest 断言结果
+# Output: pytest 断言结果与保护止损回归验证
 # Pos: 测试用例
 # 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
 
@@ -878,3 +878,287 @@ class TestOnAlgoOrderUpdate:
 
         # 状态应保留
         assert (symbol, PositionSide.LONG) in mgr._states
+
+
+class TestStopPriceValidation:
+    """止损价有效性检查测试"""
+
+    def test_long_valid_stop_price(self):
+        """LONG 止损价高于爆仓价时有效"""
+        exchange = MagicMock(spec=ExchangeAdapter)
+        mgr = ProtectiveStopManager(exchange, client_order_id_prefix="vq-ps-")
+
+        # 止损价 101 > 爆仓价 100 * 1.0001 = 100.01
+        assert mgr.is_stop_price_valid(
+            position_side=PositionSide.LONG,
+            stop_price=Decimal("101"),
+            liquidation_price=Decimal("100"),
+        ) is True
+
+    def test_long_invalid_stop_price_below_liq(self):
+        """LONG 止损价低于爆仓价时无效"""
+        exchange = MagicMock(spec=ExchangeAdapter)
+        mgr = ProtectiveStopManager(exchange, client_order_id_prefix="vq-ps-")
+
+        # 止损价 99 < 爆仓价 100
+        assert mgr.is_stop_price_valid(
+            position_side=PositionSide.LONG,
+            stop_price=Decimal("99"),
+            liquidation_price=Decimal("100"),
+        ) is False
+
+    def test_long_invalid_stop_price_too_close(self):
+        """LONG 止损价接近爆仓价（< 0.01%）时无效"""
+        exchange = MagicMock(spec=ExchangeAdapter)
+        mgr = ProtectiveStopManager(exchange, client_order_id_prefix="vq-ps-")
+
+        # 止损价 100.005 < 100 * 1.0001 = 100.01
+        assert mgr.is_stop_price_valid(
+            position_side=PositionSide.LONG,
+            stop_price=Decimal("100.005"),
+            liquidation_price=Decimal("100"),
+        ) is False
+
+    def test_short_valid_stop_price(self):
+        """SHORT 止损价低于爆仓价时有效"""
+        exchange = MagicMock(spec=ExchangeAdapter)
+        mgr = ProtectiveStopManager(exchange, client_order_id_prefix="vq-ps-")
+
+        # 止损价 99 < 爆仓价 100 * 0.9999 = 99.99
+        assert mgr.is_stop_price_valid(
+            position_side=PositionSide.SHORT,
+            stop_price=Decimal("99"),
+            liquidation_price=Decimal("100"),
+        ) is True
+
+    def test_short_invalid_stop_price_above_liq(self):
+        """SHORT 止损价高于爆仓价时无效"""
+        exchange = MagicMock(spec=ExchangeAdapter)
+        mgr = ProtectiveStopManager(exchange, client_order_id_prefix="vq-ps-")
+
+        # 止损价 101 > 爆仓价 100
+        assert mgr.is_stop_price_valid(
+            position_side=PositionSide.SHORT,
+            stop_price=Decimal("101"),
+            liquidation_price=Decimal("100"),
+        ) is False
+
+    def test_short_invalid_stop_price_too_close(self):
+        """SHORT 止损价接近爆仓价（< 0.01%）时无效"""
+        exchange = MagicMock(spec=ExchangeAdapter)
+        mgr = ProtectiveStopManager(exchange, client_order_id_prefix="vq-ps-")
+
+        # 止损价 99.995 > 100 * 0.9999 = 99.99
+        assert mgr.is_stop_price_valid(
+            position_side=PositionSide.SHORT,
+            stop_price=Decimal("99.995"),
+            liquidation_price=Decimal("100"),
+        ) is False
+
+
+@pytest.mark.asyncio
+class TestInvalidExternalStop:
+    """无效外部止损场景测试"""
+
+    async def test_cancels_invalid_external_short_stop(self, monkeypatch):
+        """SHORT 外部止损价高于爆仓价时，取消外部止损并由程序接管"""
+        events: list[dict] = []
+
+        def fake_log_event(*_args, **kwargs):
+            events.append(kwargs)
+
+        monkeypatch.setattr("src.risk.protective_stop.log_event", fake_log_event)
+
+        exchange = MagicMock(spec=ExchangeAdapter)
+        exchange.fetch_open_orders = AsyncMock(return_value=[])
+        exchange.fetch_open_orders_raw = AsyncMock(
+            return_value=[
+                {
+                    "id": "ext-invalid",
+                    "type": "stop_market",
+                    "reduceOnly": True,
+                    "triggerPrice": "110",  # 高于爆仓价 100，无效
+                    "info": {"positionSide": "SHORT", "reduceOnly": True, "triggerPrice": "110"},
+                }
+            ]
+        )
+        exchange.fetch_open_algo_orders = AsyncMock(return_value=[])
+        exchange.place_order = AsyncMock(
+            return_value=OrderResult(success=True, order_id="new-1", status=OrderStatus.NEW)
+        )
+        exchange.cancel_order = AsyncMock(
+            return_value=OrderResult(success=True, order_id="ext-invalid", status=OrderStatus.CANCELED)
+        )
+
+        mgr = ProtectiveStopManager(exchange, client_order_id_prefix="vq-ps-")
+        symbol = "BTC/USDT:USDT"
+        rules = SymbolRules(
+            symbol=symbol,
+            tick_size=Decimal("0.1"),
+            step_size=Decimal("0.001"),
+            min_qty=Decimal("0.001"),
+            min_notional=Decimal("5"),
+        )
+        positions = {
+            PositionSide.SHORT: Position(
+                symbol=symbol,
+                position_side=PositionSide.SHORT,
+                position_amt=Decimal("-0.01"),
+                entry_price=Decimal("90"),
+                unrealized_pnl=Decimal("0"),
+                leverage=10,
+                liquidation_price=Decimal("100"),  # 爆仓价
+                mark_price=Decimal("95"),
+            )
+        }
+
+        await mgr.sync_symbol(
+            symbol=symbol,
+            rules=rules,
+            positions=positions,
+            enabled=True,
+            dist_to_liq=Decimal("0.01"),
+        )
+
+        # 应该取消无效的外部止损
+        exchange.cancel_order.assert_called()
+        # 应该下新的有效止损单
+        exchange.place_order.assert_called()
+        # 应该有 cancel_invalid_external_stop 日志
+        assert any(e.get("reason") == "cancel_invalid_external_stop" for e in events)
+
+    async def test_valid_external_keeps_takeover(self, monkeypatch):
+        """存在有效外部止损时保持外部接管（仅清理无效单）"""
+        events: list[dict] = []
+
+        def fake_log_event(*_args, **kwargs):
+            events.append(kwargs)
+
+        monkeypatch.setattr("src.risk.protective_stop.log_event", fake_log_event)
+
+        exchange = MagicMock(spec=ExchangeAdapter)
+        exchange.fetch_open_orders = AsyncMock(return_value=[])
+        exchange.fetch_open_orders_raw = AsyncMock(
+            return_value=[
+                {
+                    "id": "ext-invalid",
+                    "type": "stop_market",
+                    "reduceOnly": True,
+                    "triggerPrice": "110",
+                    "info": {"positionSide": "SHORT", "reduceOnly": True, "triggerPrice": "110"},
+                },
+                {
+                    "id": "ext-valid",
+                    "type": "stop_market",
+                    "reduceOnly": True,
+                    "triggerPrice": "90",
+                    "info": {"positionSide": "SHORT", "reduceOnly": True, "triggerPrice": "90"},
+                },
+            ]
+        )
+        exchange.fetch_open_algo_orders = AsyncMock(return_value=[])
+        exchange.place_order = AsyncMock(
+            return_value=OrderResult(success=True, order_id="new-1", status=OrderStatus.NEW)
+        )
+        exchange.cancel_order = AsyncMock(
+            return_value=OrderResult(success=True, order_id="ext-invalid", status=OrderStatus.CANCELED)
+        )
+
+        mgr = ProtectiveStopManager(exchange, client_order_id_prefix="vq-ps-")
+        symbol = "BTC/USDT:USDT"
+        rules = SymbolRules(
+            symbol=symbol,
+            tick_size=Decimal("0.1"),
+            step_size=Decimal("0.001"),
+            min_qty=Decimal("0.001"),
+            min_notional=Decimal("5"),
+        )
+        positions = {
+            PositionSide.SHORT: Position(
+                symbol=symbol,
+                position_side=PositionSide.SHORT,
+                position_amt=Decimal("-0.01"),
+                entry_price=Decimal("90"),
+                unrealized_pnl=Decimal("0"),
+                leverage=10,
+                liquidation_price=Decimal("100"),
+                mark_price=Decimal("95"),
+            )
+        }
+
+        await mgr.sync_symbol(
+            symbol=symbol,
+            rules=rules,
+            positions=positions,
+            enabled=True,
+            dist_to_liq=Decimal("0.01"),
+        )
+
+        exchange.cancel_order.assert_called()
+        exchange.place_order.assert_not_called()
+        assert any(e.get("reason") == "cancel_invalid_external_stop" for e in events)
+
+    async def test_invalid_external_ignores_latch(self, monkeypatch):
+        """无效外部止损在锁存期内也应允许接管"""
+        events: list[dict] = []
+
+        def fake_log_event(*_args, **kwargs):
+            events.append(kwargs)
+
+        monkeypatch.setattr("src.risk.protective_stop.log_event", fake_log_event)
+
+        exchange = MagicMock(spec=ExchangeAdapter)
+        exchange.fetch_open_orders = AsyncMock(return_value=[])
+        exchange.fetch_open_orders_raw = AsyncMock(
+            return_value=[
+                {
+                    "id": "ext-invalid",
+                    "type": "stop_market",
+                    "reduceOnly": True,
+                    "triggerPrice": "110",
+                    "info": {"positionSide": "SHORT", "reduceOnly": True, "triggerPrice": "110"},
+                }
+            ]
+        )
+        exchange.fetch_open_algo_orders = AsyncMock(return_value=[])
+        exchange.place_order = AsyncMock(
+            return_value=OrderResult(success=True, order_id="new-1", status=OrderStatus.NEW)
+        )
+        exchange.cancel_order = AsyncMock(
+            return_value=OrderResult(success=True, order_id="ext-invalid", status=OrderStatus.CANCELED)
+        )
+
+        mgr = ProtectiveStopManager(exchange, client_order_id_prefix="vq-ps-")
+        symbol = "BTC/USDT:USDT"
+        rules = SymbolRules(
+            symbol=symbol,
+            tick_size=Decimal("0.1"),
+            step_size=Decimal("0.001"),
+            min_qty=Decimal("0.001"),
+            min_notional=Decimal("5"),
+        )
+        positions = {
+            PositionSide.SHORT: Position(
+                symbol=symbol,
+                position_side=PositionSide.SHORT,
+                position_amt=Decimal("-0.01"),
+                entry_price=Decimal("90"),
+                unrealized_pnl=Decimal("0"),
+                leverage=10,
+                liquidation_price=Decimal("100"),
+                mark_price=Decimal("95"),
+            )
+        }
+
+        await mgr.sync_symbol(
+            symbol=symbol,
+            rules=rules,
+            positions=positions,
+            enabled=True,
+            dist_to_liq=Decimal("0.01"),
+            external_stop_latch_by_side={PositionSide.SHORT: True},
+        )
+
+        exchange.cancel_order.assert_called()
+        exchange.place_order.assert_called()
+        assert any(e.get("reason") == "cancel_invalid_external_stop" for e in events)

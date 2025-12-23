@@ -170,6 +170,7 @@ IDLE ──(信号触发)──▶ PLACING ──(下单成功)──▶ WAITING
 - 强制风控（panic_close）：当 `dist_to_liq` 落入 `global.risk.panic_close.tiers` 任一档位时，绕过信号/节流，按 `slice_ratio` 强制分片下单（reduceOnly），maker 连续超时达到 `maker_timeouts_to_escalate` 升级为 `AGGRESSIVE_LIMIT`；TTL 固定为 `execution.order_ttl_ms × ttl_percent`
 - 仓位保护性止损（Step 9.3）：为每个“有持仓”的 `symbol + positionSide` 维护交易所端 `STOP_MARKET closePosition` 条件单（`MARK_PRICE` 触发），stopPrice 基于 `liquidation_price` 与 `dist_to_liq` 阈值反推；clientOrderId 使用稳定前缀以支持重启后续管，仓位归零时自动撤销
 - 外部止损接管（Step 9.3 扩展）：当检测到同侧存在**外部 stop/tp 条件单**（满足 `STOP/TAKE_PROFIT*` 且 `reduceOnly=True`；或 `closePosition=True` 兜底）时，视为外部接管：撤销我方保护止损并暂停维护。
+  - 外部止损有效性检查：若外部止损价接近/劣于爆仓价（0.01% 以内），视为无效并取消；仅当不存在有效外部止损时由程序接管并重新挂单。
   - REST 校验以 raw openOrders（`GET /fapi/v1/openOrders`）为主，必要时回退 ccxt openOrders，并合并 openAlgoOrders，避免 ccxt 漏掉部分 closePosition 条件单。
   - 多外部单并存时，WS 收到某一张终态不代表接管结束：先标记 pending，并触发一次 REST verify，只有 verify 确认“同侧外部 stop/tp 已不存在”才 release 并恢复自维护。
 - risk 订单优先级：`OrderIntent.is_risk=true` 的下单/撤单绕过软限速（`max_orders_per_sec`/`max_cancels_per_sec`），避免在强平风险区被限速“卡住”
@@ -329,6 +330,7 @@ vibe-quant/
 | 2025-12-20 | 保护性止损策略增强：只允许"收紧"止损（不放松），同步调度采用分级 debounce（position_update 1s，startup/calibration 0s，其余 0.2s）；外部接管采用锁存 + REST 保险丝（可配），并在启动/接管时打印外部单摘要与外部多单告警 |
 | 2025-12-21 | Bug 修复：外部接管 release 后立即触发 resync（避免保护止损 52s 空档）；新增杠杆同步功能（LeverageUpdate + ACCOUNT_CONFIG_UPDATE 解析 + REST positionRisk 启动校准） |
 | 2025-12-23 | Bug 修复：WS 重连 guard 与撤单超时后的状态机恢复（COOLDOWN 保留订单上下文） |
+| 2025-12-23 | 新增外部止损有效性检查：无效外部止损取消并由程序接管 |
 
 ---
 
