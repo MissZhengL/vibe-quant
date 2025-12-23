@@ -107,7 +107,7 @@
 ## Step 0.1：确认运行目标与最小闭环范围（MVP）
 
 **状态**：✅ 已完成<br>
-**日期**：2024-12-16<br>
+**日期**：2025-12-16<br>
 **产出**：`memory-bank/mvp-scope.md`
 
 ### 完成内容
@@ -132,7 +132,7 @@ WS 行情 → 信号判断 → 下单/撤单 → 仓位收敛
 ## Step 1.1：建立目录结构与模块边界
 
 **状态**：✅ 已完成<br>
-**日期**：2024-12-16<br>
+**日期**：2025-12-16<br>
 **产出**：`src/` 目录结构、`models.py`、各模块空实现
 
 ### 完成内容
@@ -180,7 +180,7 @@ src/
 ## Step 1.2：配置文件与配置覆盖规则（global + symbols）
 
 **状态**：✅ 已完成<br>
-**日期**：2024-12-16<br>
+**日期**：2025-12-16<br>
 **产出**：`src/config/models.py`、`src/config/loader.py`、`config/config.yaml`、`tests/test_config.py`
 
 ### 完成内容
@@ -224,7 +224,7 @@ global 默认值 + symbol 覆盖 = MergedSymbolConfig
 ## Step 1.3：日志系统（按天滚动 + 结构化）
 
 **状态**：✅ 已完成<br>
-**日期**：2024-12-16<br>
+**日期**：2025-12-16<br>
 **产出**：`src/utils/logger.py`、`tests/test_logger.py`
 
 ### 完成内容
@@ -261,7 +261,7 @@ global 默认值 + symbol 覆盖 = MergedSymbolConfig
 ## Step 2：交易所适配层（ExchangeAdapter）
 
 **状态**：✅ 已完成<br>
-**日期**：2024-12-17<br>
+**日期**：2025-12-17<br>
 **产出**：`src/exchange/adapter.py`、`tests/test_exchange.py`
 
 ### 完成内容
@@ -308,7 +308,7 @@ global 默认值 + symbol 覆盖 = MergedSymbolConfig
 ## Step 3.1：市场数据 WebSocket（MarketWSClient）
 
 **状态**：✅ 已完成<br>
-**日期**：2024-12-17<br>
+**日期**：2025-12-17<br>
 **产出**：`src/ws/market.py`、`tests/test_ws_market.py`
 
 ### 完成内容
@@ -369,7 +369,7 @@ class MarketWSClient:
 ## Step 3.2：实现数据陈旧（stale）检测
 
 **状态**：✅ 已完成<br>
-**日期**：2024-12-17<br>
+**日期**：2025-12-17<br>
 **产出**：`src/ws/market.py`、`src/main.py`、`tests/test_ws_market.py`
 
 ### 完成内容
@@ -387,7 +387,7 @@ class MarketWSClient:
 ## Step 3.3：User Data Stream WebSocket
 
 **状态**：✅ 已完成<br>
-**日期**：2024-12-17<br>
+**日期**：2025-12-17<br>
 **产出**：`src/ws/user_data.py`、`tests/test_ws_user_data.py`、`src/main.py`、`src/models.py`
 
 ### 完成内容
@@ -455,7 +455,7 @@ pytest -q: 202 passed
 ## Step 4：信号层（SignalEngine）
 
 **状态**：✅ 已完成<br>
-**日期**：2024-12-17<br>
+**日期**：2025-12-17<br>
 **产出**：`src/signal/engine.py`、`tests/test_signal.py`
 
 ### 完成内容
@@ -504,7 +504,7 @@ class SignalEngine:
 ## Step 5：执行层（ExecutionEngine）
 
 **状态**：✅ 已完成<br>
-**日期**：2024-12-17<br>
+**日期**：2025-12-17<br>
 **产出**：`src/execution/engine.py`、`tests/test_execution.py`
 
 ### 完成内容
@@ -589,7 +589,7 @@ class ExecutionEngine:
 ## Milestone：main.py 事件循环集成（MVP 集成）
 
 **状态**：✅ 已完成<br>
-**日期**：2024-12-17<br>
+**日期**：2025-12-17<br>
 **提交**：`162740d`<br>
 **产出**：`src/main.py`
 
@@ -688,7 +688,7 @@ pyright: 0 errors
 ## Step 6.1：WS 断线自动重连
 
 **状态**：✅ 已完成<br>
-**日期**：2024-12-17<br>
+**日期**：2025-12-17<br>
 **提交**：`162740d`<br>
 **产出**：`src/ws/market.py`、`src/ws/user_data.py`
 
@@ -914,7 +914,7 @@ pytest -q: 204 passed
 
 ---
 
-## 附加改进（不在 implementation-plan 编号内）
+## 其他小改动
 
 - `3e789cd`：新增 `maker_safety_ticks` 降低 post-only 被拒概率
 - `d84d0a7`：相同信号快照不重复打印，降低日志刷屏
