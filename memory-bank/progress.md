@@ -44,6 +44,16 @@
 - `src/execution/engine.py`：撤单超时进入 `COOLDOWN` 且保留订单上下文，允许迟到 WS 回执更新状态
 - `tests/test_execution.py`：补充撤单回执延迟仍可处理的用例，超时撤单后状态期望调整为 `COOLDOWN`
 
+## Milestone/附加改进：无效外部止损检测与接管
+
+**状态**：✅ 已完成<br>
+**日期**：2025-12-23<br>
+**动机**：外部止损单可能设置了无效的止损价（如 SHORT 止损价高于爆仓价），这种止损永远不会触发（爆仓会先发生）。启动或同步时需检测并取消无效外部止损，由程序重新挂有效止损。<br>
+**产出**：
+- `src/risk/protective_stop.py`：新增 `is_stop_price_valid()` 方法检查止损价有效性（LONG 需 > 爆仓价；SHORT 需 < 爆仓价；容差 0.01%）
+- `src/risk/protective_stop.py`：`_sync_side()` 中检测外部止损有效性，多外部单场景下仅在无有效止损时接管；无效止损取消后允许接管绕过锁存
+- `tests/test_protective_stop.py`：新增止损有效性与无效外部止损接管测试
+
 ## Milestone/附加改进：保护性止损"外部接管"事件驱动恢复
 
 **状态**：✅ 已完成<br>

@@ -1,5 +1,5 @@
-# Input: positions, rules, exchange adapter
-# Output: protective stop orders and state
+# Input: positions, rules, exchange adapter, external stop orders
+# Output: protective stop orders, takeover decisions, and state
 # Pos: protective stop manager
 # 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
 
@@ -145,6 +145,42 @@ class ProtectiveStopManager:
             return round_up_to_tick(raw, tick_size)
         raw = liquidation_price / (Decimal("1") + dist_to_liq)
         return round_to_tick(raw, tick_size)
+
+    def is_stop_price_valid(
+        self,
+        *,
+        position_side: PositionSide,
+        stop_price: Decimal,
+        liquidation_price: Decimal,
+        min_dist_ratio: Decimal = Decimal("0.0001"),  # 0.01%
+    ) -> bool:
+        """
+        检查止损价是否有效（能在爆仓前触发）。
+
+        无效条件（含接近爆仓价的情况）：
+        - LONG: stop_price <= liquidation_price * (1 + min_dist_ratio)
+        - SHORT: stop_price >= liquidation_price * (1 - min_dist_ratio)
+
+        Args:
+            position_side: 仓位方向
+            stop_price: 止损价
+            liquidation_price: 爆仓价
+            min_dist_ratio: 最小有效距离比例（默认 0.01%）
+
+        Returns:
+            True 如果止损价有效
+        """
+        if liquidation_price <= Decimal("0") or stop_price <= Decimal("0"):
+            return False
+
+        if position_side == PositionSide.LONG:
+            # LONG 止损是 SELL stop，价格下跌触发
+            # 止损价必须高于爆仓价（这样价格下跌时先触发止损）
+            return stop_price > liquidation_price * (Decimal("1") + min_dist_ratio)
+        else:
+            # SHORT 止损是 BUY stop，价格上涨触发
+            # 止损价必须低于爆仓价（这样价格上涨时先触发止损）
+            return stop_price < liquidation_price * (Decimal("1") - min_dist_ratio)
 
     def _extract_order_id(self, order: Dict[str, Any]) -> Optional[str]:
         """提取订单 ID（支持 algo order 的 algoId 和普通订单的 id）"""
@@ -484,6 +520,7 @@ class ProtectiveStopManager:
                     dist_to_liq=dist_to_liq,
                     existing_orders=orders_by_side.get(side) or [],
                     has_external_stop=external_stops_by_side.get(side, False),
+                    external_stop_orders=external_stop_orders_by_side.get(side) or [],
                     external_stop_sample=external_stop_sample_by_side.get(side),
                     has_external_stop_latch=bool(external_latch_by_side.get(side, False)),
                 )
@@ -500,6 +537,7 @@ class ProtectiveStopManager:
         dist_to_liq: Decimal,
         existing_orders: Sequence[Dict[str, Any]],
         has_external_stop: bool = False,
+        external_stop_orders: Optional[Sequence[Dict[str, Any]]] = None,
         external_stop_sample: Optional[Dict[str, Any]] = None,
         has_external_stop_latch: bool = False,
     ) -> None:
@@ -545,13 +583,45 @@ class ProtectiveStopManager:
         if position is None:
             return
 
-        # 已有外部 closePosition 止损/止盈单：外部接管（撤掉我们自己的，且停止维护）
+        # 已有外部 closePosition 止损/止盈单：检查是否有效
         if has_external_stop:
-            if keep_order is not None:
-                order_id = self._extract_order_id(keep_order)
-                if order_id:
+            liq_price = position.liquidation_price if position else None
+            orders = list(external_stop_orders or [])
+            if not orders and external_stop_sample is not None:
+                orders = [external_stop_sample]
+
+            has_unknown_external = False
+            valid_external_orders: list[Dict[str, Any]] = []
+            invalid_external_orders: list[Dict[str, Any]] = []
+
+            for order in orders:
+                stop_price = self._extract_stop_price(order)
+                if stop_price is None or liq_price is None or liq_price <= Decimal("0"):
+                    # 无法提取止损价时，保守地认为有效（避免误删）
+                    has_unknown_external = True
+                    continue
+                if self.is_stop_price_valid(
+                    position_side=side,
+                    stop_price=stop_price,
+                    liquidation_price=liq_price,
+                ):
+                    valid_external_orders.append(order)
+                else:
+                    invalid_external_orders.append(order)
+
+            has_valid_external = bool(valid_external_orders or has_unknown_external)
+            invalid_detected = False
+
+            if invalid_external_orders:
+                # 无效的外部止损 → 取消并由程序接管
+                for invalid_order in invalid_external_orders:
+                    invalid_detected = True
+                    external_order_id = self._extract_order_id(invalid_order)
+                    external_stop_price = self._extract_stop_price(invalid_order)
+                    if not external_order_id:
+                        continue
                     try:
-                        await self._exchange.cancel_order(symbol, order_id)
+                        await self._exchange.cancel_order(symbol, external_order_id)
                         log_event(
                             "protective_stop",
                             event_cn="保护止损",
@@ -559,14 +629,39 @@ class ProtectiveStopManager:
                             side=side.value,
                             risk_stage=self._risk_stage,
                             risk_level=self._get_risk_level(),
-                            reason="cancel_own_due_to_external_stop",
-                            order_id=order_id,
+                            reason="cancel_invalid_external_stop",
+                            order_id=external_order_id,
+                            external_stop_price=str(external_stop_price) if external_stop_price else None,
+                            liquidation_price=str(liq_price) if liq_price else None,
                         )
                     except Exception as e:
-                        log_error(f"保护止损撤单失败: {e}", symbol=symbol, order_id=order_id)
-                        return
-            self._states.pop((symbol, side), None)
-            return
+                        log_error(f"取消无效外部止损失败: {e}", symbol=symbol, order_id=external_order_id)
+
+            if has_valid_external:
+                # 有效的外部止损 → 保持原有"外部接管"逻辑（撤掉我们自己的，停止维护）
+                if keep_order is not None:
+                    order_id = self._extract_order_id(keep_order)
+                    if order_id:
+                        try:
+                            await self._exchange.cancel_order(symbol, order_id)
+                            log_event(
+                                "protective_stop",
+                                event_cn="保护止损",
+                                symbol=symbol,
+                                side=side.value,
+                                risk_stage=self._risk_stage,
+                                risk_level=self._get_risk_level(),
+                                reason="cancel_own_due_to_external_stop",
+                                order_id=order_id,
+                            )
+                        except Exception as e:
+                            log_error(f"保护止损撤单失败: {e}", symbol=symbol, order_id=order_id)
+                            return
+                self._states.pop((symbol, side), None)
+                return
+            # 仅无效外部止损：不 return，继续由程序挂新止损
+            if invalid_detected:
+                has_external_stop_latch = False
 
         # 外部接管锁存：WS 已见外部 stop/tp（cp=True 或 reduceOnly=True）
         # 锁存期间避免对保护止损做“撤旧建新”，减少外部端刚创建但 REST 尚未可见时的竞态与重复单
