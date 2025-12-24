@@ -1,6 +1,6 @@
-# Input: 被测模块与 pytest 夹具
-# Output: pytest 断言结果
-# Pos: 测试用例
+# Input: 日志模块与 pytest 夹具
+# Output: 日志行为的 pytest 断言
+# Pos: 日志模块测试
 # 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
 
 """
@@ -121,7 +121,7 @@ class TestLogEvent:
     def test_log_event_with_all_fields(self):
         """测试带所有字段的事件日志"""
         log_event(
-            "order_place",
+            "place",
             symbol="BTC/USDT:USDT",
             side="LONG",
             mode="MAKER_ONLY",

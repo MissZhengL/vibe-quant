@@ -100,7 +100,7 @@ YAML-based with global defaults and per-symbol overrides. Key sections:
 - 个人项目：**No backward compatibility** - 可自由打破旧格式，重构时可移除 legacy 代码
 
 ## 3. Markdown 编写规范
-- **换行**：只有在同一段落内需要强制换行才用 `<br>`；列表项（- / 1.）本身就会换行，不应再加 `<br>`
+- **换行**：普通单行换行不会渲染为换行，需用 `<br>` 或改为 Markdown 标准结构（列表/分段/标题）实现换行
 
 ## 4. 安全审计
 - ultrathink：完整研究这个项目，重点看其是否有安全问题，是否有密钥泄漏。列出其对外交互的所有ur和接口。

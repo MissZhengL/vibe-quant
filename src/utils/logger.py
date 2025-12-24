@@ -1,6 +1,6 @@
-# Input: log dir and event fields
-# Output: configured logger and helpers
-# Pos: logging setup
+# Input: log dir and normalized event fields
+# Output: configured logger and structured logging helpers
+# Pos: logging setup and event normalization
 # 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
 
 """
@@ -39,19 +39,20 @@ EVENT_TYPE_CN = {
     "ws_connect": "WS连接",
     "ws_disconnect": "WS断开",
     "ws_reconnect": "WS重连",
-    "market_update": "行情更新",
+    "market_update": "行情",
     "signal": "信号",
-    "order_place": "下单提交",
-    "order_cancel": "撤单",
-    "order_fill": "已成交",
-    "order_timeout": "超时未成交",
-    "position_update": "仓位更新",
-    "leverage_update": "杠杆更新",
+    "place": "下单",
+    "cancel": "撤单",
+    "fill": "成交",
+    "timeout": "超时",
+    "position": "仓位",
+    "leverage": "杠杆",
     "leverage_snapshot": "杠杆快照",
-    "mode_change": "模式切换",
+    "mode": "模式",
     "calibration": "校准",
     "risk": "风控",
     "rate_limit": "限速",
+    "reject": "拒单",
     "error": "错误",
 }
 
@@ -176,7 +177,7 @@ def log_event(event_type: str, *, level: str | None = None, **fields) -> None:
     记录结构化事件日志
 
     Args:
-        event_type: 事件类型（startup/shutdown/ws_connect/signal/order_place/order_fill/...）
+        event_type: 事件类型（startup/shutdown/ws_connect/signal/place/fill/...）
         level: 日志级别覆盖（debug/info/warning/error），不传则根据 event_type 自动选择
         **fields: 事件字段，常用字段会自动缩短名称：
             - best_bid → bid
@@ -237,13 +238,13 @@ def log_event(event_type: str, *, level: str | None = None, **fields) -> None:
     elif event_type in (
         "ws_disconnect",
         "ws_reconnect",
-        "order_timeout",
+        "timeout",
         "risk",
         "rate_limit",
-        "order_reject",
+        "reject",
     ):
         _logger.warning(message)
-    elif event_type in ("startup", "shutdown", "signal", "order_fill"):
+    elif event_type in ("startup", "shutdown", "signal", "fill"):
         _logger.info(message)
     elif event_type in ("market_update",):
         _logger.debug(message)
@@ -333,7 +334,7 @@ def log_order_place(
 ) -> None:
     """记录下单事件"""
     log_event(
-        "order_place",
+        "place",
         symbol=symbol,
         side=side,
         mode=mode,
@@ -350,7 +351,7 @@ def log_order_cancel(
 ) -> None:
     """记录撤单事件"""
     log_event(
-        "order_cancel",
+        "cancel",
         symbol=symbol,
         order_id=order_id,
         reason=reason,
@@ -366,7 +367,7 @@ def log_order_fill(
 ) -> None:
     """记录成交事件"""
     log_event(
-        "order_fill",
+        "fill",
         symbol=symbol,
         side=side,
         order_id=order_id,
@@ -383,7 +384,7 @@ def log_order_timeout(
 ) -> None:
     """记录超时事件"""
     log_event(
-        "order_timeout",
+        "timeout",
         symbol=symbol,
         side=side,
         timeout_count=timeout_count,
@@ -398,7 +399,7 @@ def log_position_update(
 ) -> None:
     """记录仓位更新事件"""
     log_event(
-        "position_update",
+        "position",
         symbol=symbol,
         side=side,
         position_amt=position_amt,
@@ -433,8 +434,7 @@ def log_order_reject(
 ) -> None:
     """记录下单被拒（可预期错误）事件。"""
     log_event(
-        "order_reject",
-        event_cn="下单被拒",
+        "reject",
         symbol=symbol,
         side=side,
         reason=reason,

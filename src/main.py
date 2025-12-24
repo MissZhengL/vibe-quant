@@ -1,6 +1,6 @@
 # Input: config path, env vars, OS signals
-# Output: application lifecycle and async tasks
-# Pos: application entrypoint
+# Output: application lifecycle, async tasks, and events
+# Pos: application entrypoint and orchestrator
 # 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
 
 """
@@ -1216,7 +1216,7 @@ class Application:
                     )
 
         log_event(
-            "leverage_update",
+            "leverage",
             symbol=update.symbol,
             reason="ws_account_config_update",
             leverage=update.leverage,

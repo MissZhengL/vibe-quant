@@ -1,6 +1,6 @@
 # Input: ExitSignal, OrderUpdate, OrderResult, config, rules
-# Output: OrderIntent and execution state transitions
-# Pos: execution state machine (per side)
+# Output: OrderIntent and per-side execution state transitions
+# Pos: per-side execution state machine and mode rotation
 # 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
 
 """
@@ -779,7 +779,7 @@ class ExecutionEngine:
         state.aggr_fill_count = 0
 
         log_event(
-            "mode_change",
+            "mode",
             symbol=state.symbol,
             side=state.position_side.value,
             mode=new_mode.value,

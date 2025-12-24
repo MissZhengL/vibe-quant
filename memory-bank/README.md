@@ -1,6 +1,6 @@
 <!-- Input: memory-bank 文档与进度记录 -->
-<!-- Output: 设计/架构/进度文档索引与维护提示 -->
-<!-- Pos: memory-bank 文件夹级说明 -->
+<!-- Output: 设计/架构/进度索引与维护提示 -->
+<!-- Pos: memory-bank 文件夹级说明与导航 -->
 <!-- 一旦我所属的文件夹有所变化，请更新我。 -->
 <!-- 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。 -->
 # memory-bank 目录说明
@@ -17,4 +17,3 @@
 - `mvp-scope.md`：MVP 范围定义
 - `progress.md`：进度记录与里程碑
 - `tech-stack.md`：技术栈说明
-
