@@ -1,6 +1,6 @@
-# Input: 被测模块与 pytest 夹具
-# Output: pytest 断言结果
-# Pos: 测试用例
+# Input: User Data WS 被测模块与 pytest 夹具
+# Output: 订单/仓位/杠杆解析断言
+# Pos: User Data WS 测试用例
 # 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
 
 """
@@ -215,6 +215,7 @@ class TestParseOrderUpdate:
         assert result.order_type == "LIMIT"
         assert result.close_position is None
         assert result.reduce_only is None
+        assert result.is_maker is None
 
     def test_parse_order_update_filled(self):
         """测试解析 FILLED 订单"""
@@ -237,6 +238,7 @@ class TestParseOrderUpdate:
                 "i": 87654321,
                 "z": "0.5",
                 "ap": "3000.50",
+                "m": True,
                 "ps": "SHORT",
             }
         }
@@ -253,6 +255,7 @@ class TestParseOrderUpdate:
         assert result.order_type is None
         assert result.close_position is None
         assert result.reduce_only is None
+        assert result.is_maker is True
 
     def test_parse_order_update_partially_filled(self):
         """测试解析部分成交订单"""
@@ -287,6 +290,7 @@ class TestParseOrderUpdate:
         assert result.order_type is None
         assert result.close_position is None
         assert result.reduce_only is None
+        assert result.is_maker is None
 
     def test_parse_order_update_canceled(self):
         """测试解析取消订单"""

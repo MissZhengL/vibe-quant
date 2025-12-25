@@ -32,6 +32,8 @@
 - 风控事件统一：`PROTECTIVE_STOP` + `RISK_TRIGGER` → `RISK`，用 `risk_stage` 区分
 - 日志格式优化：cn 字段不带 key 直接显示、symbol 自动简写（`ZEN/USDT:USDT` → `ZEN`）
 - 事件类型精简：`order_*` → `place/cancel/fill/timeout`，`leverage_update` → `leverage`，`mode_change` → `mode`，`order_reject` → `reject`
+- 成交日志补充 `role=maker|taker`（仅在 WS 回执含 `is_maker` 时输出）
+- 成交日志以 WS 回执为准：REST 立即成交只完成状态并缓存 `order_id`，迟到回执在 `ws_fill_grace_ms` 内补打，超时补打 `role=unknown`
 - `log_order_timeout`：`reason=timeout_count=1` → `timeout_count=1`
 - `log_startup`：`reason=symbols=...` → `symbols=...`
 - `src/main.py`：新增 `_log_startup_pos` 启动时显示有持仓状态

@@ -7,11 +7,10 @@
 
 WebSocket 数据流客户端。<br>
 市场与用户数据分离订阅。<br>
-重连容错与解析输出标准事件。
+重连容错与解析输出标准事件（含成交角色）。
 
 ## 文件清单
 
 - `market.py`：市场数据 WS（bookTicker/aggTrade/markPrice@1s）
 - `user_data.py`：用户数据 WS（订单/仓位/杠杆更新）
 - `__init__.py`：模块导出
-

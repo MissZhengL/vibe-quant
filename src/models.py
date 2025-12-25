@@ -1,6 +1,6 @@
 # Input: none
-# Output: shared enums and dataclasses
-# Pos: core data contracts
+# Output: shared enums and dataclasses for module contracts
+# Pos: core data contracts and event payloads
 # 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
 
 """
@@ -259,6 +259,7 @@ class OrderUpdate:
     order_type: Optional[str] = None  # WS 字段 o.o，例如 LIMIT / STOP_MARKET / TAKE_PROFIT_MARKET
     close_position: Optional[bool] = None  # WS 字段 o.cp，closePosition/Close-All
     reduce_only: Optional[bool] = None  # WS 字段 o.R
+    is_maker: Optional[bool] = None  # WS 字段 o.m，成交方向（maker/taker）
 
 
 # ============================================================
@@ -306,6 +307,13 @@ class SideExecutionState:
     current_order_reason: Optional[str] = None
     current_order_is_risk: bool = False
     current_order_filled_qty: Decimal = Decimal("0")
+
+    # 已完成订单缓存（用于接收迟到的 WS 成交回执）
+    last_completed_order_id: Optional[str] = None
+    last_completed_ms: int = 0
+    pending_fill_log: bool = False
+    last_completed_filled_qty: Decimal = Decimal("0")
+    last_completed_avg_price: Decimal = Decimal("0")
 
     # 风控兜底（panic close）覆盖项：仅在 risk_active 时生效
     risk_active: bool = False

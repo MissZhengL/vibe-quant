@@ -1,6 +1,6 @@
-# Input: 被测模块与 pytest 夹具
-# Output: pytest 断言结果与状态机行为验证
-# Pos: 测试用例
+# Input: 执行引擎与 pytest 夹具
+# Output: 状态机行为断言
+# Pos: ExecutionEngine 测试用例
 # 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
 
 """
@@ -707,6 +707,10 @@ class TestOnOrderPlaced:
 
         assert state.state == ExecutionState.IDLE
         assert state.current_order_id is None
+        assert state.pending_fill_log is True
+        assert state.last_completed_order_id == "order_123"
+        assert state.last_completed_filled_qty == Decimal("0.001")
+        assert state.last_completed_avg_price == Decimal("50000")
 
 
 class TestOnOrderUpdate:

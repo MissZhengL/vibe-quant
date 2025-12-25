@@ -1,6 +1,6 @@
 # Input: ExitSignal, OrderUpdate, OrderResult, config, rules
 # Output: OrderIntent and per-side execution state transitions
-# Pos: per-side execution state machine and mode rotation
+# Pos: per-side execution state machine with WS fill role handling
 # 一旦我被更新，务必更新我的开头注释，以及所属文件夹的MD。
 
 """
@@ -75,6 +75,7 @@ class ExecutionEngine:
         aggr_timeouts_to_deescalate: int = 2,
         max_mult: int = 50,
         max_order_notional: Decimal = Decimal("200"),
+        ws_fill_grace_ms: int = 5000,
     ):
         """
         初始化执行引擎
@@ -94,6 +95,7 @@ class ExecutionEngine:
             aggr_timeouts_to_deescalate: aggressive 超时降级阈值（<=0 表示不降级）
             max_mult: 最大倍数
             max_order_notional: 最大订单名义价值
+            ws_fill_grace_ms: 已完成订单等待 WS 成交回执的最大时间
         """
         self.place_order = place_order
         self.cancel_order = cancel_order
@@ -111,6 +113,7 @@ class ExecutionEngine:
         self.aggr_timeouts_to_deescalate = aggr_timeouts_to_deescalate
         self.max_mult = max_mult
         self.max_order_notional = max_order_notional
+        self.ws_fill_grace_ms = ws_fill_grace_ms
 
         self._states: Dict[str, SideExecutionState] = {}  # key: symbol:position_side
 
@@ -390,9 +393,19 @@ class ExecutionEngine:
                 order_id=result.order_id,
             )
 
-            # 如果已经完全成交，直接转到 IDLE
+            # 如果已经完全成交，立即完成状态并等待 WS 成交回执补全 role
             if result.status == OrderStatus.FILLED:
-                await self._handle_filled(intent.symbol, intent.position_side, result)
+                state.last_completed_order_id = result.order_id
+                state.last_completed_ms = current_ms
+                state.pending_fill_log = True
+                state.last_completed_filled_qty = result.filled_qty
+                state.last_completed_avg_price = result.avg_price
+                await self._handle_filled(
+                    intent.symbol,
+                    intent.position_side,
+                    result,
+                    emit_fill_log=False,
+                )
         else:
             # 下单失败，回到 IDLE 状态
             # 下单失败进入短暂冷却，避免连续触发导致刷屏/触发限速
@@ -408,6 +421,41 @@ class ExecutionEngine:
                 return
             get_logger().warning(f"下单失败: {intent.symbol} {intent.position_side.value} - {result.error_message}")
 
+    def _should_accept_late_fill(
+        self,
+        state: SideExecutionState,
+        update: OrderUpdate,
+        current_ms: int,
+    ) -> bool:
+        if not state.pending_fill_log or not state.last_completed_order_id:
+            return False
+        if update.order_id != state.last_completed_order_id:
+            return False
+        if current_ms - state.last_completed_ms > self.ws_fill_grace_ms:
+            return False
+        return update.status == OrderStatus.FILLED and update.filled_qty > Decimal("0")
+
+    def _flush_pending_fill_if_expired(
+        self,
+        state: SideExecutionState,
+        current_ms: int,
+    ) -> None:
+        if not state.pending_fill_log:
+            return
+        if current_ms - state.last_completed_ms <= self.ws_fill_grace_ms:
+            return
+        if state.last_completed_order_id:
+            log_order_fill(
+                symbol=state.symbol,
+                side=state.position_side.value,
+                order_id=state.last_completed_order_id,
+                filled_qty=state.last_completed_filled_qty,
+                avg_price=state.last_completed_avg_price,
+                role="unknown",
+            )
+        state.pending_fill_log = False
+        state.last_completed_ms = current_ms
+
     async def on_order_update(self, update: OrderUpdate, current_ms: int) -> None:
         """
         处理订单更新
@@ -418,8 +466,31 @@ class ExecutionEngine:
         """
         state = self.get_state(update.symbol, update.position_side)
 
+        self._flush_pending_fill_if_expired(state, current_ms)
+
         # 检查是否是当前订单
         if state.current_order_id != update.order_id:
+            if self._should_accept_late_fill(state, update, current_ms):
+                role = None
+                if update.is_maker is not None:
+                    role = "maker" if update.is_maker else "taker"
+                log_order_fill(
+                    symbol=update.symbol,
+                    side=update.position_side.value,
+                    order_id=update.order_id,
+                    filled_qty=update.filled_qty,
+                    avg_price=update.avg_price,
+                    role=role,
+                )
+                state.pending_fill_log = False
+                state.last_completed_order_id = None
+                state.last_completed_ms = 0
+                state.last_completed_filled_qty = Decimal("0")
+                state.last_completed_avg_price = Decimal("0")
+            else:
+                if state.last_completed_order_id == update.order_id:
+                    # TODO: WS 回执迟到且已超时忽略，后续落库时补数据一致性
+                    pass
             return
 
         if update.status == OrderStatus.FILLED:
@@ -432,12 +503,16 @@ class ExecutionEngine:
             await self._handle_expired(update.symbol, update.position_side, current_ms)
         elif update.status == OrderStatus.PARTIALLY_FILLED:
             # 部分成交，保持 WAITING 状态
+            role = None
+            if update.is_maker is not None:
+                role = "maker" if update.is_maker else "taker"
             log_order_fill(
                 symbol=update.symbol,
                 side=update.position_side.value,
                 order_id=update.order_id,
                 filled_qty=update.filled_qty,
                 avg_price=update.avg_price,
+                role=role,
             )
             state.current_order_filled_qty = update.filled_qty
 
@@ -457,6 +532,8 @@ class ExecutionEngine:
         symbol: str,
         position_side: PositionSide,
         update: OrderUpdate | OrderResult,
+        *,
+        emit_fill_log: bool = True,
     ) -> None:
         """处理完全成交"""
         state = self.get_state(symbol, position_side)
@@ -468,13 +545,18 @@ class ExecutionEngine:
         order_mode = executed_mode
         order_reason = state.current_order_reason or "unknown"
 
-        log_order_fill(
-            symbol=symbol,
-            side=position_side.value,
-            order_id=order_id,
-            filled_qty=filled_qty,
-            avg_price=avg_price,
-        )
+        role = None
+        if isinstance(update, OrderUpdate) and update.is_maker is not None:
+            role = "maker" if update.is_maker else "taker"
+        if emit_fill_log:
+            log_order_fill(
+                symbol=symbol,
+                side=position_side.value,
+                order_id=order_id,
+                filled_qty=filled_qty,
+                avg_price=avg_price,
+                role=role,
+            )
 
         # 成交通知（必须不阻塞主链路）
         if self._on_fill:
@@ -577,6 +659,13 @@ class ExecutionEngine:
             True 如果触发了撤单
         """
         state = self.get_state(symbol, position_side)
+        self._flush_pending_fill_if_expired(state, current_ms)
+        if not state.pending_fill_log and state.last_completed_order_id:
+            if current_ms - state.last_completed_ms > self.ws_fill_grace_ms:
+                state.last_completed_order_id = None
+                state.last_completed_ms = 0
+                state.last_completed_filled_qty = Decimal("0")
+                state.last_completed_avg_price = Decimal("0")
 
         # 只在 WAITING 状态检查超时
         if state.state != ExecutionState.WAITING:
